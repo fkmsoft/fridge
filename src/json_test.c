@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include <json-c/json.h>
+#include <json.h>
 
 #define DEFAULT_FILE "game.json"
 
