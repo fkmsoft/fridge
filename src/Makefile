@@ -9,7 +9,7 @@ json_test: LDLIBS = -ljson-c
 json_test: CFLAGS += -I/usr/include/json-c
 json_test: json_test.c
 
-fridge: LDLIBS = `sdl2-config --libs` -ljson-c
+fridge: LDLIBS = `sdl2-config --libs` -ljson-c -lSDL2_image
 fridge: CFLAGS += -I/usr/include/json-c
 fridge: CFLAGS += `sdl2-config --cflags`
 fridge: fridge.c

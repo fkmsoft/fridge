@@ -1,1 +1,3 @@
 *.swp
+/src/fridge
+/src/json_test
