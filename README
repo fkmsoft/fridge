@@ -1,0 +1,10 @@
+fridce
+======
+
+This is a rewrite of the 2012 hackathon jump'n'run game "fridge filler"
+in C using the SDL2.
+
+Dependencies:
+
+* SDL2
+* json-c
