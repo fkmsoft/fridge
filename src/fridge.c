@@ -15,8 +15,18 @@ struct session {
 	SDL_Renderer *r;
 	SDL_Texture *player;
 	SDL_Texture *background;
+	SDL_Surface *collision;
 	int w;
 	int h;
+};
+
+struct game_rules {
+	int start_x;
+	int start_y;
+	int walk_dist;
+	int jump_dist;
+	int jump_time;
+	int fall_dist;
 };
 
 struct game_state {
@@ -34,29 +44,38 @@ struct game_event {
 	SDL_bool move_right;
 	SDL_bool move_jump;
 	SDL_bool exit;
+	SDL_bool reset;
 };
 
 typedef struct session session;
+typedef struct game_rules game_rules;
 typedef struct game_state game_state;
 typedef struct game_event game_event;
 
 /* high level init */
 SDL_bool init_session(session *s, char const *root);
-SDL_bool init_game(game_state *g, char const *root);
+SDL_bool init_game(game_rules *r, game_state *g, char const *root);
 
 /* high level game */
-void process_event(SDL_Event *ev, game_event *r);
-void process_keystate(Uint8 const *ks, game_event *r);
-void update_gamestate(game_state *gs, game_event *ev);
-void render(session *s, game_state *gs);
+void process_event(SDL_Event const *ev, game_event *r);
+void process_keystate(unsigned char const *ks, game_event *r);
+void update_gamestate(session const *s, game_rules const *gr, game_state *gs, game_event const *ev);
+void render(session const *s, game_state const *gs);
 void clear_event(game_event *ev);
+
+SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
+SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
+void player_rect(int x, int y, SDL_Rect *r);
 
 /* low level interactions */
 char const *get_asset(json_object *a, char const *k);
+SDL_bool get_int_field(json_object *o, char const *s, int *r);
 SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
-SDL_Texture *load_asset(json_object *a, char const *d, SDL_Renderer *r, char const *k);
+SDL_Texture *load_asset_tex(json_object *a, char const *d, SDL_Renderer *r, char const *k);
+SDL_Surface *load_asset_surf(json_object *a, char const *d, char const *k);
 void draw_background(SDL_Renderer *r, SDL_Texture *bg, int x, int y);
 void draw_player(SDL_Renderer *r, SDL_Texture *pl, unsigned int frame, SDL_bool flip);
+unsigned getpixel(SDL_Surface const *s, int x, int y);
 
 int main(void) {
 	SDL_bool ok;
@@ -66,8 +85,9 @@ int main(void) {
 	ok = init_session(&s, root);
 	if (!ok) { return 1; }
 
+	game_rules gr;
 	game_state gs;
-	ok = init_game(&gs, root);
+	ok = init_game(&gr, &gs, root);
 	if (!ok) { return 2; }
 
 	game_event ge;
@@ -84,12 +104,12 @@ int main(void) {
 			process_event(&event, &ge);
 		}
 
-		Uint8 const *keystate = SDL_GetKeyboardState(0);
+		unsigned char const *keystate = SDL_GetKeyboardState(0);
 		process_keystate(keystate, &ge);
 
 		ticks = SDL_GetTicks();
 		if (ticks - old_ticks >= TICK) {
-			update_gamestate(&gs, &ge);
+			update_gamestate(&s, &gr, &gs, &ge);
 			clear_event(&ge);
 			/*
 			printf("%d\n", ticks - old_ticks);
@@ -136,43 +156,68 @@ SDL_bool init_session(session *s, char const *root)
 
 	sprintf(asset_dir, "%s/%s", root, "assets");
 
-	s->player = load_asset(assets, asset_dir, s->r, "player");
+	s->player = load_asset_tex(assets, asset_dir, s->r, "player");
 	if (!s->player) { return SDL_FALSE; }
 
-	s->background = load_asset(assets, asset_dir, s->r, "background");
+	s->background = load_asset_tex(assets, asset_dir, s->r, "background");
 	if (!s->background) { return SDL_FALSE; }
+
+	s->collision = load_asset_surf(assets, asset_dir, "collision");
+	if (!s->collision) { return SDL_FALSE; }
 
 	json_object_put(assets);
 
 	return SDL_TRUE;
 }
 
-SDL_bool init_game(game_state *g, char const *root)
+SDL_bool init_game(game_rules *r, game_state *g, char const *root)
 {
-	json_object *game, *start;
+	json_object *game, *player, *start;
 	json_bool ok;
 
 	char buf[500];
 	sprintf(buf, "%s/%s", root, "game.json");
 	game = json_object_from_file(buf);
 
-	g->player_dir = DIR_LEFT;
-	g->player_state = ST_IDLE;
-	ok = json_object_object_get_ex(game, "start", &start);
+	ok = json_object_object_get_ex(game, "player", &player);
+	if (!ok) {
+		puts("no player");
+		return SDL_FALSE;
+	}
+
+	ok = json_object_object_get_ex(player, "start", &start);
 	if (!ok) {
 		puts("no start");
-		return;
+		return SDL_FALSE;
 	}
-	g->player_x = json_object_get_int(json_object_array_get_idx(start, 0));
-	g->player_y = json_object_get_int(json_object_array_get_idx(start, 1));
+
+	r->start_x = json_object_get_int(json_object_array_get_idx(start, 0));
+	r->start_y = json_object_get_int(json_object_array_get_idx(start, 1));
+
+	SDL_bool yes;
+	yes = get_int_field(player, "walk_dist", &r->walk_dist);
+	if (!yes) { return SDL_FALSE; }
+	yes = get_int_field(player, "jump_dist", &r->jump_dist);
+	if (!yes) { return SDL_FALSE; }
+	yes = get_int_field(player, "jump_time", &r->jump_time);
+	if (!yes) { return SDL_FALSE; }
+	yes = get_int_field(player, "fall_dist", &r->fall_dist);
+	if (!yes) { return SDL_FALSE; }
+
+	g->player_dir = DIR_LEFT;
+	g->player_state = ST_IDLE;
+	g->player_x = r->start_x;
+	g->player_y = r->start_y;
 	g->run = SDL_TRUE;
 	g->animation_frame = 0;
 	g->jump_timeout = 0;
+
+	return SDL_TRUE;
 }
 
 
 /* high level game */
-void process_event(SDL_Event *ev, game_event *r)
+void process_event(SDL_Event const *ev, game_event *r)
 {
 	int key = ev->key.keysym.sym;
 
@@ -188,18 +233,21 @@ void process_event(SDL_Event *ev, game_event *r)
 		case SDLK_SPACE:
 			r->move_jump = SDL_TRUE;
 			break;
+		case SDLK_r:
+			r->reset = SDL_TRUE;
+			break;
 		}
 		break;
 	}
 }
 
-void process_keystate(Uint8 const *ks, game_event *r)
+void process_keystate(unsigned char const *ks, game_event *r)
 {
 	if (ks[SDL_SCANCODE_LEFT]) { r->move_left = SDL_TRUE; }
 	if (ks[SDL_SCANCODE_RIGHT]) { r->move_right = SDL_TRUE; }
 }
 
-void update_gamestate(game_state *gs, game_event *ev)
+void update_gamestate(session const *s, game_rules const *gr, game_state *gs, game_event const *ev)
 {
 	gs->animation_frame = (gs->animation_frame + 1) % 2;
 
@@ -210,19 +258,56 @@ void update_gamestate(game_state *gs, game_event *ev)
 		gs->player_dir = ev->move_left ? DIR_LEFT : DIR_RIGHT;
 	}
 
+	int old_x = gs->player_x;
+	int dir = (gs->player_dir == DIR_LEFT) ? -1 : 1;
 	if (gs->player_state == ST_WALK) {
-		gs->player_x += (gs->player_dir == DIR_LEFT ? -1 : 1) * 4;
+		gs->player_x += dir * gr->walk_dist;
 	}
 
-	if (ev->move_jump) {
-		gs->jump_timeout = 9;
+	SDL_Rect r;
+	player_rect(gs->player_x, gs->player_y, &r);
+
+	if (collides_with_terrain(&r, s->collision)) {
+		gs->player_x = old_x;
+		player_rect(gs->player_x, gs->player_y, &r);
+		/*
+		do {
+			gs->player_x += dir;
+			r->x += dir;
+		} while (!collides_with_terrain(&r, s->collision));
+		*/
+	}
+
+	if (ev->move_jump && gs->player_state != ST_FALL) {
+		gs->jump_timeout = gr->jump_time;
 	}
 
 	if (gs->jump_timeout > 0) {
+		int old_y = gs->player_y;
 		gs->player_state = ST_FALL;
 		gs->jump_timeout -= 1;
-		gs->player_y -= 10;
+		gs->player_y -= gr->jump_dist;
 		gs->animation_frame = 1;
+
+		player_rect(gs->player_x, gs->player_y, &r);
+		if (collides_with_terrain(&r, s->collision)) {
+			gs->player_y = old_y;
+			gs->jump_timeout = 0;
+		}
+	} else {
+		player_rect(gs->player_x, gs->player_y, &r);
+		int f;
+		for (f = gr->jump_dist; !stands_on_terrain(&r, s->collision) && f > 0; f--) {
+			gs->player_state = ST_FALL;
+			gs->animation_frame = 0;
+			r.y += 1;
+			gs->player_y += 1;
+		}
+	}
+
+	if (ev->reset) {
+		gs->player_x = gr->start_x;
+		gs->player_y = gr->start_y;
 	}
 
 	if (ev->exit) {
@@ -230,7 +315,7 @@ void update_gamestate(game_state *gs, game_event *ev)
 	}
 }
 
-void render(session *s, game_state *gs)
+void render(session const *s, game_state const *gs)
 {
 	SDL_RenderClear(s->r);
 
@@ -246,6 +331,40 @@ void clear_event(game_event *ev)
 	ev->move_right = SDL_FALSE;
 	ev->move_jump = SDL_FALSE;
 	ev->exit = SDL_FALSE;
+	ev->reset =SDL_FALSE;
+}
+
+SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t)
+{
+	int x = r->x;
+	int y = r->y;
+
+	/*
+	if (getpixel(t, x,        y       ) == 0) { printf("left  head: %u %u\n", x,      y); }
+	if (getpixel(t, x + r->w, y       ) == 0) { printf("right head: %u %u\n", x+r->w, y); }
+	if (getpixel(t, x,        y + r->h) == 0) { printf("left  foot: %u %u\n", x,      y+r->h); }
+	if (getpixel(t, x + r->w, y + r->h) == 0) { printf("right foot: %u %u\n", x+r->w, y+r->h); }
+	*/
+
+	return getpixel(t, x,        y       ) == 0 ||
+	       getpixel(t, x + r->w, y       ) == 0 ||
+	       getpixel(t, x,        y + r->h) == 0 ||
+	       getpixel(t, x + r->w, y + r->h) == 0;
+}
+
+SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t)
+{
+	int x = r->x + r->w / 2;
+
+	return getpixel(t, x, r->y + r->h + 1) == 0;
+}
+
+void player_rect(int x, int y, SDL_Rect *r)
+{
+	r->x = x + 400 - 9;
+	r->y = y + 300 - 25;
+	r->w = 18;
+	r->h = 55;
 }
 
 /* low level interactions */
@@ -290,7 +409,22 @@ char const *get_asset(json_object *a, char const *k)
 	return ok ? json_object_get_string(str) : 0;
 }
 
-SDL_Texture *load_asset(json_object *a, char const *d, SDL_Renderer *r, char const *k)
+SDL_bool get_int_field(json_object *o, char const *s, int *r)
+{
+	json_bool ok;
+	json_object *var;
+
+	ok = json_object_object_get_ex(o, s, &var);
+	if (!ok) {
+		fprintf(stderr, "no %s\n", s);
+		return SDL_FALSE;
+	}
+	*r = json_object_get_int(var);
+
+	return SDL_TRUE;
+}
+
+SDL_Texture *load_asset_tex(json_object *a, char const *d, SDL_Renderer *r, char const *k)
 {
 	char const *f;
 	char p[500];
@@ -301,4 +435,45 @@ SDL_Texture *load_asset(json_object *a, char const *d, SDL_Renderer *r, char con
 	sprintf(p, "%s/%s", d, f);
 
 	return load_texture(r, p);
+}
+
+SDL_Surface *load_asset_surf(json_object *a, char const *d, char const *k)
+{
+	char const *f;
+	char p[500];
+
+	f = get_asset(a, k);
+	if (!f) { return 0; }
+
+	sprintf(p, "%s/%s", d, f);
+
+	return IMG_Load(p);
+}
+
+unsigned getpixel(SDL_Surface const *s, int x, int y)
+{
+	int bpp = s->format->BytesPerPixel;
+	unsigned char *p = (unsigned char *)s->pixels + y * s->pitch + x * bpp;
+
+	switch (bpp) {
+	case 1:
+		return *p;
+		break;
+	case 2:
+		return *(short *)p;
+		break;
+	case 3:
+		if (SDL_BYTEORDER == SDL_BIG_ENDIAN) {
+			return p[0] << 16 | p[1] << 8 | p[2];
+		} else {
+			return p[0] | p[1] << 8 | p[2] << 16;
+		}
+		break;
+	case 4:
+		return *(unsigned *)p;
+		break;
+	default:
+		fprintf(stderr, "getpixel: unsupported image format: %d bytes per pixel\n", bpp);
+		return 0;
+	}
 }
