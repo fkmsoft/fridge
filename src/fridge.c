@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include <json.h>
+#include <jansson.h>
 
 #include <SDL.h>
 #include <SDL_image.h>
@@ -68,11 +68,11 @@ SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
 void player_rect(int x, int y, SDL_Rect *r);
 
 /* low level interactions */
-char const *get_asset(json_object *a, char const *k);
-SDL_bool get_int_field(json_object *o, char const *s, int *r);
+char const *get_asset(json_t *a, char const *k);
+SDL_bool get_int_field(json_t *o, char const *s, int *r);
 SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
-SDL_Texture *load_asset_tex(json_object *a, char const *d, SDL_Renderer *r, char const *k);
-SDL_Surface *load_asset_surf(json_object *a, char const *d, char const *k);
+SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k);
+SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k);
 void draw_background(SDL_Renderer *r, SDL_Texture *bg, int x, int y);
 void draw_player(SDL_Renderer *r, SDL_Texture *pl, unsigned int frame, SDL_bool flip);
 unsigned getpixel(SDL_Surface const *s, int x, int y);
@@ -151,8 +151,8 @@ SDL_bool init_session(session *s, char const *root)
 	char asset_dir[500];
 	sprintf(asset_dir, "%s/%s", root, "assets.json");
 
-	json_object *assets;
-	assets = json_object_from_file(asset_dir);
+	json_t *assets;
+	assets = json_load_file(asset_dir, 0, 0);
 
 	sprintf(asset_dir, "%s/%s", root, "assets");
 
@@ -165,44 +165,48 @@ SDL_bool init_session(session *s, char const *root)
 	s->collision = load_asset_surf(assets, asset_dir, "collision");
 	if (!s->collision) { return SDL_FALSE; }
 
-	json_object_put(assets);
+	/*json_decref(assets);*/
 
 	return SDL_TRUE;
 }
 
 SDL_bool init_game(game_rules *r, game_state *g, char const *root)
 {
-	json_object *game, *player, *start;
-	json_bool ok;
+	json_t *game, *player, *start;
 
 	char buf[500];
 	sprintf(buf, "%s/%s", root, "game.json");
-	game = json_object_from_file(buf);
+	game = json_load_file(buf, 0, 0);
 
-	ok = json_object_object_get_ex(game, "player", &player);
-	if (!ok) {
+	player = json_object_get(game, "player");
+	if (!player) {
 		puts("no player");
 		return SDL_FALSE;
 	}
 
-	ok = json_object_object_get_ex(player, "start", &start);
-	if (!ok) {
+	start = json_object_get(player, "start");
+	if (!start) {
 		puts("no start");
 		return SDL_FALSE;
 	}
 
-	r->start_x = json_object_get_int(json_object_array_get_idx(start, 0));
-	r->start_y = json_object_get_int(json_object_array_get_idx(start, 1));
+	r->start_x = json_integer_value(json_array_get(start, 0));
+	r->start_y = json_integer_value(json_array_get(start, 1));
 
-	SDL_bool yes;
-	yes = get_int_field(player, "walk_dist", &r->walk_dist);
-	if (!yes) { return SDL_FALSE; }
-	yes = get_int_field(player, "jump_dist", &r->jump_dist);
-	if (!yes) { return SDL_FALSE; }
-	yes = get_int_field(player, "jump_time", &r->jump_time);
-	if (!yes) { return SDL_FALSE; }
-	yes = get_int_field(player, "fall_dist", &r->fall_dist);
-	if (!yes) { return SDL_FALSE; }
+	/*json_decref(start);*/
+
+	SDL_bool ok;
+	ok = get_int_field(player, "walk_dist", &r->walk_dist);
+	if (!ok) { return SDL_FALSE; }
+	ok = get_int_field(player, "jump_dist", &r->jump_dist);
+	if (!ok) { return SDL_FALSE; }
+	ok = get_int_field(player, "jump_time", &r->jump_time);
+	if (!ok) { return SDL_FALSE; }
+	ok = get_int_field(player, "fall_dist", &r->fall_dist);
+	if (!ok) { return SDL_FALSE; }
+
+	/*json_decref(player);*/
+	/*json_decref(game);*/
 
 	g->player_dir = DIR_LEFT;
 	g->player_state = ST_IDLE;
@@ -399,32 +403,38 @@ void draw_player(SDL_Renderer *r, SDL_Texture *pl, unsigned int frame, SDL_bool 
 	SDL_RenderCopyEx(r, pl, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
 }
 
-char const *get_asset(json_object *a, char const *k)
+char const *get_asset(json_t *a, char const *k)
 {
-	json_object *str;
-	json_bool ok;
+	json_t *v;
 
-	ok = json_object_object_get_ex(a, k, &str);
+	v = json_object_get(a, k);
+	if (!v) {
+		fprintf(stderr, "no %s\n", k);
+		return 0;
+	}
 
-	return ok ? json_object_get_string(str) : 0;
+	char const *r = json_string_value(v);
+	/*json_decref(v);*/
+
+	return r;
 }
 
-SDL_bool get_int_field(json_object *o, char const *s, int *r)
+SDL_bool get_int_field(json_t *o, char const *s, int *r)
 {
-	json_bool ok;
-	json_object *var;
+	json_t *var;
 
-	ok = json_object_object_get_ex(o, s, &var);
-	if (!ok) {
+	var = json_object_get(o, s);
+	if (!var) {
 		fprintf(stderr, "no %s\n", s);
 		return SDL_FALSE;
 	}
-	*r = json_object_get_int(var);
+	*r = json_integer_value(var);
+	/*json_decref(var);*/
 
 	return SDL_TRUE;
 }
 
-SDL_Texture *load_asset_tex(json_object *a, char const *d, SDL_Renderer *r, char const *k)
+SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k)
 {
 	char const *f;
 	char p[500];
@@ -437,7 +447,7 @@ SDL_Texture *load_asset_tex(json_object *a, char const *d, SDL_Renderer *r, char
 	return load_texture(r, p);
 }
 
-SDL_Surface *load_asset_surf(json_object *a, char const *d, char const *k)
+SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k)
 {
 	char const *f;
 	char p[500];

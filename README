@@ -16,3 +16,6 @@ Used Assets:
 * Floppy Disc by Gobusto: http://opengameart.org/content/floppy-disk (CC-BY-SA 3.0)
 * Pixel Art TV Set by Kieff: http://opengameart.org/content/pixel-art-tv-set (CC-BY-SA 3.0)
 * Ghost Lvl1,2,3 (60px) by qubodup: http://opengameart.org/content/ghost-lvl1-2-3-60px (CC-BY-SA 3.0)
+
+Used Code:
+* getpixel from: http://sdl.beuc.net/sdl.wiki/Pixel_Access

@@ -3,13 +3,13 @@
 #include <stddef.h>
 #include <string.h>
 
-#include <json.h>
+#include <jansson.h>
 
-#define DEFAULT_FILE "game.json"
+#define DEFAULT_FILE "../game.json"
 
 int main(int argc, char **argv)
 {
-	json_object *obj;
+	json_t *obj;
 
 	char const *filename;
 	if (argc == 2) {
@@ -18,9 +18,9 @@ int main(int argc, char **argv)
 		filename = DEFAULT_FILE;
 	}
 
-	obj = json_object_from_file(filename);
-	printf("%s\n", json_object_to_json_string(obj));
-	json_object_put(obj);
+	obj = json_load_file(filename, 0, 0);
+	printf("%s\n", json_dumps(obj, 0));
+	json_decref(obj);
 
 	return 0;
 }
