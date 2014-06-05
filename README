@@ -1,4 +1,4 @@
-fridce
+fridge
 ======
 
 This is a rewrite of the 2012 hackathon jump'n'run game "fridge filler"
@@ -7,4 +7,12 @@ in C using the SDL2.
 Dependencies:
 
 * SDL2
+* SDL2_image
 * json-c
+
+Used Assets:
+* Burger by Gobusto: http://opengameart.org/content/burger (CC-BY-SA 3.0)
+* Pizza Sprite by Gobusto: http://opengameart.org/content/pizza-sprite (CC-BY-SA 3.0)
+* Floppy Disc by Gobusto: http://opengameart.org/content/floppy-disk (CC-BY-SA 3.0)
+* Pixel Art TV Set by Kieff: http://opengameart.org/content/pixel-art-tv-set (CC-BY-SA 3.0)
+* Ghost Lvl1,2,3 (60px) by qubodup: http://opengameart.org/content/ghost-lvl1-2-3-60px (CC-BY-SA 3.0)
