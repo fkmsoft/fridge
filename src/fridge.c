@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdarg.h>
 
 #include <jansson.h>
 
@@ -7,6 +8,8 @@
 
 #define TICK 80
 #define ROOTVAR "FRIDGE_ROOT"
+#define GAME_CONF "game.json"
+#define MAX_PATH 500
 
 #define ASSET_DIR "assets"
 #define CONF_DIR "conf"
@@ -107,10 +110,16 @@ static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *sc
 static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p);
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s);
 static unsigned getpixel(SDL_Surface const *s, int x, int y);
+static char const *set_path(char const *fmt, ...);
 
 int main(void) {
 	SDL_bool ok;
 	char const *root = getenv(ROOTVAR);
+	if (!root || !*root) {
+		fprintf(stderr, "error: environment undefined\n");
+		fprintf(stderr, "set %s to the installation directory of Fridge Filler\n", ROOTVAR);
+		return 1;
+	}
 
 	session s;
 	game_state gs;
@@ -159,12 +168,13 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	SDL_Window *window;
 	int i;
 	json_t *game, *player, *spawn, *entities;
-	char buf[500];
-	sprintf(buf, "%s/%s/%s", root, CONF_DIR, "game.json");
+
+	char const *path;
+	path = set_path("%s/%s/%s", root, CONF_DIR, GAME_CONF);
 	json_error_t err;
-	game = json_load_file(buf, 0, &err);
+	game = json_load_file(path, 0, &err);
 	if (*err.text != 0) {
-		fprintf(stderr, "parsing error in %s: %s\n", buf, err.text);
+		fprintf(stderr, "error: in %s:%d: %s\n", path, err.line, err.text);
 		return SDL_FALSE;
 	}
 
@@ -186,12 +196,10 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	/*SDL_SetWindowIcon(window, temp);*/
 	s->r = SDL_CreateRenderer(window, -1, 0);
 
-	sprintf(buf, "%s/%s", root, ASSET_DIR);
-
-	s->background = load_asset_tex(game, buf, s->r, "background");
+	s->background = load_asset_tex(game, root, s->r, "background");
 	if (!s->background) { return SDL_FALSE; }
 
-	s->collision = load_asset_surf(game, buf, "collision");
+	s->collision = load_asset_surf(game, root, "collision");
 	if (!s->collision) { return SDL_FALSE; }
 
 	entity_rule *e_rules;
@@ -211,7 +219,15 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	char const *name;
 	json_t *o;
 	json_object_foreach(entities, name, o) {
-		load_entity_resource(o, name, &e_texs[i], s->r, &e_rules[i], root);
+
+		SDL_bool ok;
+		ok = load_entity_resource(o, name, &e_texs[i], s->r, &e_rules[i], root);
+		if (!ok) {
+			return SDL_FALSE;
+		}
+
+		/* save the index in the buffer, so the items in groups can
+		 * link directly to their rules and textures later: */
 		json_object_set_new(o, "index", json_integer(i));
 		i += 1;
 	}
@@ -236,6 +252,10 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	gs->player.spawn.x = json_integer_value(json_array_get(spawn, 0));
 	gs->player.spawn.y = json_integer_value(json_array_get(spawn, 1));
 	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi]);
+
+	/* all texture pointers are copied by value, no need to hold onto the
+	 * e_texs buffer */
+	free(e_texs);
 
 	gs->run = SDL_TRUE;
 
@@ -597,28 +617,26 @@ static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r)
 	return SDL_TRUE;
 }
 
-static SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k)
+static SDL_Texture *load_asset_tex(json_t *a, char const *root, SDL_Renderer *r, char const *k)
 {
-	char const *f;
-	char p[500];
+	char const *f, *p;
 
 	f = get_asset(a, k);
 	if (!f) { return 0; }
 
-	sprintf(p, "%s/%s", d, f);
+	p = set_path("%s/%s/%s", root, ASSET_DIR, f);
 
 	return load_texture(r, p);
 }
 
-static SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k)
+static SDL_Surface *load_asset_surf(json_t *a, char const *root, char const *k)
 {
-	char const *f;
-	char p[500];
+	char const *f, *p;
 
 	f = get_asset(a, k);
 	if (!f) { return 0; }
 
-	sprintf(p, "%s/%s", d, f);
+	p = set_path("%s/%s/%s", root, ASSET_DIR, f);
 
 	return IMG_Load(p);
 }
@@ -629,8 +647,8 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	char const *ps;
 	o = json_object_get(src, "resource");
 	ps = json_string_value(o);
-	char buf[500];
-	sprintf(buf, "%s/%s/%s", root, CONF_DIR, ps);
+	char const *path;
+	path = set_path("%s/%s/%s", root, CONF_DIR, ps);
 
 	get_int_field(src, n, "walk_dist", &er->walk_dist);
 	get_int_field(src, n, "jump_dist", &er->jump_dist);
@@ -638,10 +656,13 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	get_int_field(src, n, "fall_dist", &er->fall_dist);
 
 	json_error_t e;
-	o = json_load_file(buf, 0, &e);
+	o = json_load_file(path, 0, &e);
+	if (*e.text != 0) {
+		fprintf(stderr, "error: in %s:%d: %s\n", path, e.line, e.text);
+		return SDL_FALSE;
+	}
 
-	sprintf(buf, "%s/%s", root, ASSET_DIR);
-	*t = load_asset_tex(o, buf, r, "asset");
+	*t = load_asset_tex(o, root, r, "asset");
 	if (!t) { return SDL_FALSE; }
 
 	json_t *siz;
@@ -720,4 +741,17 @@ static unsigned getpixel(SDL_Surface const *s, int x, int y)
 		fprintf(stderr, "getpixel: unsupported image format: %d bytes per pixel\n", bpp);
 		return 0;
 	}
+}
+
+static char const *set_path(char const *fmt, ...)
+{
+	static char buf[MAX_PATH];
+
+	va_list ap;
+	va_start(ap, fmt);
+
+	vsnprintf(buf, MAX_PATH - 1, fmt, ap);
+	va_end(ap);
+
+	return buf;
 }

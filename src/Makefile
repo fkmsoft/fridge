@@ -1,4 +1,4 @@
-CFLAGS = -Wall -g -ansi -Dinline=
+CFLAGS = -Wall -g -std=c99
 
 all: json_test fridge
 
