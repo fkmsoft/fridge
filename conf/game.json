@@ -1,6 +1,7 @@
 { "background": "level1_bg.gif",
   "collision": "level1.gif",
-  "message": "message.gif",
+  "message": { "resource": "message.gif",
+               "text-pos": [130, 60] },
   "intro": "start_ani.gif",
   "resolution": [800, 600],
   "spawn": [162, 710],
