@@ -1,6 +1,5 @@
 { "background": "level1_bg.gif",
   "collision": "level1.gif",
-  "player": "mc_idle.gif",
   "message": "message.gif",
   "intro": "start_ani.gif",
   "objects": [{"name": "burger", "file": "burger.gif"},

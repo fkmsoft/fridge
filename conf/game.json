@@ -11,8 +11,9 @@
                [1385,  980,   "once", "Yummy, old pizza!", ""],
                [ 570, 1220, "always", "Are all my TVs broken", "or what?"],
                [ 460, 1220, "always", "finish", ""]],
-  "player": {"start": [162, 710],
-             "walk_dist": 8,
-             "jump_dist": 15,
-             "jump_time": 8,
-             "fall_dist": 20}}
+  "player": { "resource": "player.json",
+              "start": [162, 710],
+              "walk_dist": 8,
+              "jump_dist": 15,
+              "jump_time": 8,
+              "fall_dist": 20 }}
