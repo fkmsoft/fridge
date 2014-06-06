@@ -19,7 +19,7 @@ typedef struct {
 	int h;
 } session;
 
-enum dir { DIR_LEFT, DIR_RIGHT };
+enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
 enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, NSTATES };
 char const * const st_names[] = { "idle", "walk", "fall", "jump" };
 
@@ -47,6 +47,7 @@ typedef struct {
 
 typedef struct {
 	SDL_Rect pos;
+	SDL_Rect spawn;
 	enum dir dir;
 	enum state st;
 	int jump_timeout;
@@ -59,6 +60,8 @@ typedef struct {
 	entity_state player;
 	unsigned nobjects;
 	entity_state *objs;
+	unsigned nenemies;
+	entity_state *enemies;
 	SDL_bool run;
 } game_state;
 
@@ -76,6 +79,7 @@ typedef struct {
 
 /* high level init */
 static SDL_bool init_game(session *s, game_state *g, char const *root);
+void init_group(unsigned *count, entity_state **arr, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules);
 static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t);
 
 /* high level game */
@@ -154,7 +158,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 {
 	SDL_Window *window;
 	int i;
-	json_t *game, *player, *start, *objs, *entities;
+	json_t *game, *player, *spawn, *entities;
 	char buf[500];
 	sprintf(buf, "%s/%s/%s", root, CONF_DIR, "game.json");
 	json_error_t err;
@@ -164,9 +168,9 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
-	start = json_object_get(game, "resolution");
-	s->w = json_integer_value(json_array_get(start, 0));
-	s->h = json_integer_value(json_array_get(start, 1));
+	spawn = json_object_get(game, "resolution");
+	s->w = json_integer_value(json_array_get(spawn, 0));
+	s->h = json_integer_value(json_array_get(spawn, 1));
 
 	i = SDL_Init(SDL_INIT_VIDEO);
 	if (i < 0) {
@@ -212,29 +216,8 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		i += 1;
 	}
 
-	objs = json_object_get(game, "objects");
-	if (!objs) {
-		gs->nobjects = 0;
-		gs->objs = 0;
-	} else {
-		k = json_object_size(objs);
-		gs->nobjects = k;
-		gs->objs = malloc(sizeof(entity_state) * k);
-
-		i = 0;
-		char const *name;
-		json_t *o;
-		json_object_foreach(objs, name, o) {
-			int ei;
-			json_t *entity;
-			entity = json_object_get(entities, name);
-			ei = json_integer_value(json_object_get(entity, "index"));
-			e_rules[ei].start_dim.x = json_integer_value(json_array_get(o, 0));
-			e_rules[ei].start_dim.y = json_integer_value(json_array_get(o, 1));
-			init_entity_state(&gs->objs[i], &e_rules[ei], e_texs[ei]);
-			i += 1;
-		}
-	}
+	init_group(&gs->nobjects, &gs->objs, game, "objects", e_texs, e_rules);
+	init_group(&gs->nenemies, &gs->enemies, game, "enemies", e_texs, e_rules);
 
 	int pi;
 	player = json_object_get(entities, "player");
@@ -244,14 +227,14 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	}
 	pi = json_integer_value(json_object_get(player, "index"));
 
-	start = json_object_get(game, "spawn");
-	if (!start) {
+	spawn = json_object_get(game, "spawn");
+	if (!spawn) {
 		fprintf(stderr, "error: no spawn coordinates defined\n");
 		return SDL_FALSE;
 	}
 
-	e_rules[pi].start_dim.x = json_integer_value(json_array_get(start, 0));
-	e_rules[pi].start_dim.y = json_integer_value(json_array_get(start, 1));
+	gs->player.spawn.x = json_integer_value(json_array_get(spawn, 0));
+	gs->player.spawn.y = json_integer_value(json_array_get(spawn, 1));
 	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi]);
 
 	gs->run = SDL_TRUE;
@@ -259,6 +242,48 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	json_decref(game);
 
 	return SDL_TRUE;
+}
+
+void init_group(unsigned *count, entity_state **arr, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules)
+{
+	json_t *objs, *entities;
+	entity_state *a;
+
+	entities = json_object_get(game, "entities");
+	objs = json_object_get(game, key);
+	if (!objs) {
+		*count = 0;
+		*arr = 0;
+		return;
+	}
+
+	int i, k;
+	i = 0;
+	k = 0;
+	json_t *o;
+	char const *name;
+	json_object_foreach(objs, name, o) {
+		k += json_array_size(o);
+	}
+
+	*count = k;
+	a = malloc(sizeof(entity_state) * k);
+	*arr = a;
+
+	i = 0;
+	json_t *spawn;
+	json_object_foreach(objs, name, o) {
+		int ei, j;
+		json_t *entity;
+		entity = json_object_get(entities, name);
+		ei = json_integer_value(json_object_get(entity, "index"));
+		json_array_foreach(o, j, spawn) {
+			a[i].spawn.x = json_integer_value(json_array_get(spawn, 0));
+			a[i].spawn.y = json_integer_value(json_array_get(spawn, 1));
+			init_entity_state(&a[i], &e_rules[ei], e_texs[ei]);
+			i += 1;
+		}
+	}
 }
 
 static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t)
@@ -275,8 +300,8 @@ static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Textu
 	es->dir = DIR_LEFT;
 	es->st = start_state;
 	load_state(es);
-	es->pos.x = er->start_dim.x;
-	es->pos.y = er->start_dim.y;
+	es->pos.x = es->spawn.x;
+	es->pos.y = es->spawn.y;
 	es->jump_timeout = 0;
 }
 
@@ -317,6 +342,17 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	int i;
 	for (i = 0; i < gs->nobjects; i++) {
 		tick_animation(&gs->objs[i]);
+	}
+
+	for (i = 0; i < gs->nenemies; i++) {
+		tick_animation(&gs->enemies[i]);
+		int dir = (gs->enemies[i].dir == DIR_LEFT) ? -1 : 1;
+		int old_x = gs->enemies[i].pos.x;
+		gs->enemies[i].pos.x += dir * gs->enemies[i].rule->walk_dist;
+		if (collides_with_terrain(&gs->enemies[i].pos, s->collision)) {
+			gs->enemies[i].pos.x = old_x;
+			gs->enemies[i].dir *= -1;
+		}
 	}
 
 	entity_rule const *pr = gs->player.rule;
@@ -432,6 +468,11 @@ static void render(session const *s, game_state const *gs)
 	for (i = 0; i < gs->nobjects; i++) {
 		draw_entity(s->r, &screen, &gs->objs[i]);
 	}
+
+	for (i = 0; i < gs->nenemies; i++) {
+		draw_entity(s->r, &screen, &gs->enemies[i]);
+	}
+
 	draw_player(s->r, &screen, &gs->player);
 
 	SDL_RenderPresent(s->r);

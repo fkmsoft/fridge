@@ -1,5 +1,5 @@
-{ "asset": "disc.gif",
+{ "asset": "ghost.gif",
   "frame_size": [32, 64],
   "frame_count": 2,
-  "idle": { "frames": [0, 1], "duration": [1, 4], "box": [0,  0, 32, 64] },
-  "walk": { "frames": [0, 1], "duration": [1, 4], "box": [0,  0, 32, 64] }}
+  "idle": { "frames": [0, 1], "duration": [1, 4], "box": [0,  0, 32, 40] },
+  "walk": { "frames": [0, 1], "duration": [1, 4], "box": [0,  0, 32, 40] }}
