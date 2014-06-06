@@ -51,12 +51,18 @@ typedef struct {
 } msg_info;
 
 typedef struct {
+	pos pos;
+	message win;
+	message loss;
+} finish;
+
+typedef struct {
 	SDL_Renderer *r;
 	SDL_Texture *background;
 	SDL_Surface *collision;
 	msg_info msg;
-	int w;
-	int h;
+	finish finish;
+	pos screen;
 } session;
 
 typedef struct {
@@ -104,7 +110,7 @@ typedef struct {
 	int need_to_collect;
 	entity_state player;
 	group entities[NGROUPS];
-	message *msg;
+	message const *msg;
 	SDL_bool run;
 } game_state;
 
@@ -144,11 +150,13 @@ static void player_rect(SDL_Rect const *pos, SDL_Rect *r);
 /* low level interactions */
 static char const *get_asset(json_t *a, char const *k);
 static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r);
-static void load_messages(session *s, json_t *game, TTF_Font *font, int fontsize, char const *root);
+static SDL_bool load_finish(session *s, json_t *game, TTF_Font *font, int fontsize);
+static SDL_bool load_messages(session *s, json_t *game, TTF_Font *font, int fontsize, char const *root);
 static SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
 static SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k);
 static SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k);
 static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, entity_rule *er, char const *root);
+static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset);
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
 static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p);
@@ -239,8 +247,8 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	}
 
 	spawn = json_object_get(game, "resolution");
-	s->w = json_integer_value(json_array_get(spawn, 0));
-	s->h = json_integer_value(json_array_get(spawn, 1));
+	s->screen.x = json_integer_value(json_array_get(spawn, 0));
+	s->screen.y = json_integer_value(json_array_get(spawn, 1));
 
 	i = SDL_Init(SDL_INIT_VIDEO);
 	if (i < 0) {
@@ -248,7 +256,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
-	window = SDL_CreateWindow("Fridge Filler", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, s->w, s->h, 0);
+	window = SDL_CreateWindow("Fridge Filler", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, s->screen.x, s->screen.y, 0);
 	if (!window) {
 		fprintf(stderr, "Could not init video: %s\n", SDL_GetError());
 		return SDL_FALSE;
@@ -257,8 +265,13 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	/*SDL_SetWindowIcon(window, temp);*/
 	s->r = SDL_CreateRenderer(window, -1, 0);
 
-	load_messages(s, game, font, fnt_siz, root);
+	SDL_bool ok;
+	ok = load_finish(s, game, font, fnt_siz);
+	if (!ok) { return SDL_FALSE; }
+
 	gs->msg = 0;
+	ok = load_messages(s, game, font, fnt_siz, root);
+	if (!ok) { return SDL_FALSE; }
 
 	s->background = load_asset_tex(game, root, s->r, "background");
 	if (!s->background) { return SDL_FALSE; }
@@ -284,7 +297,6 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	json_t *o;
 	json_object_foreach(entities, name, o) {
 
-		SDL_bool ok;
 		ok = load_entity_resource(o, name, &e_texs[i], s->r, &e_rules[i], root);
 		if (!ok) {
 			return SDL_FALSE;
@@ -560,6 +572,15 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		}
 	}
 
+	player_rect(&gs->player.pos, &r);
+	if (in_rect(&s->finish.pos,  &r)) {
+		if (gs->need_to_collect == 0) {
+			gs->msg = &s->finish.win;
+		} else {
+			gs->msg = &s->finish.loss;
+		}
+	}
+
 	if (ev->exit) {
 		gs->run = SDL_FALSE;
 	}
@@ -594,7 +615,7 @@ static void render(session const *s, game_state const *gs)
 	int i;
 	SDL_RenderClear(s->r);
 
-	SDL_Rect screen = { x: gs->player.pos.x, y: gs->player.pos.y, w: s->w, h: s->h };
+	SDL_Rect screen = { x: gs->player.pos.x, y: gs->player.pos.y, w: s->screen.x, h: s->screen.y };
 
 	draw_background(s->r, s->background, &screen);
 	int g;
@@ -776,9 +797,35 @@ static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r)
 	return SDL_TRUE;
 }
 
-static void load_messages(session *s, json_t *game, TTF_Font *font, int fontsize, char const *root)
+static SDL_bool load_finish(session *s, json_t *game, TTF_Font *font, int fontsize)
+{
+	finish *f = &s->finish;
+	json_t *fin = json_object_get(game, "finish");
+	if (!fin) { return SDL_FALSE; }
+
+	json_t *o = json_object_get(fin, "pos");
+	f->pos.x = json_integer_value(json_array_get(o, 0));
+	f->pos.y = json_integer_value(json_array_get(o, 1));
+
+	o = json_object_get(fin, "win");
+	f->win = (message) { pos: { x: f->pos.x,
+	                            y: f->pos.y },
+		             when: MSG_NEVER };
+	render_message(&f->win, s->r, font, o, 0);
+
+	o = json_object_get(fin, "loss");
+	f->loss = (message) { pos: { x: f->pos.x,
+	                             y: f->pos.y },
+		              when: MSG_NEVER };
+	render_message(&f->loss, s->r, font, o, 0);
+
+	return SDL_TRUE;
+}
+
+static SDL_bool load_messages(session *s, json_t *game, TTF_Font *font, int fontsize, char const *root)
 {
 	json_t *o = json_object_get(game, "message");
+	if (!o) { return SDL_FALSE; }
 
 	msg_info *mi = &s->msg;
 
@@ -787,12 +834,12 @@ static void load_messages(session *s, json_t *game, TTF_Font *font, int fontsize
 	if (!msg_srf) {
 		fprintf(stderr, "warning: message texture missing\n");
 		mi->n = 0;
-		return;
+		return SDL_FALSE;
 	}
 
 	mi->tex = SDL_CreateTextureFromSurface(s->r, msg_srf);
-	mi->box = (SDL_Rect) { x: (s->w - msg_srf->w) / 2,
-	                       y: s->h - msg_srf->h,
+	mi->box = (SDL_Rect) { x: (s->screen.x - msg_srf->w) / 2,
+	                       y: s->screen.y - msg_srf->h,
 			       w: msg_srf->w,
 			       h: msg_srf->h };
 	SDL_FreeSurface(msg_srf);
@@ -817,23 +864,10 @@ static void load_messages(session *s, json_t *game, TTF_Font *font, int fontsize
 		        when: streq(frq_names[MSG_ONCE], json_string_value(json_array_get(m, 2))) ?
 				MSG_ONCE : MSG_ALWAYS };
 
-		SDL_Surface *text;
-		SDL_Color col = {0, 0, 0, 255};
-
-		int j;
-		for (j = 0; j < MSG_LINES; j++) {
-			char const *str = json_string_value(json_array_get(m, 3 + j));
-			if (str && *str) {
-				text = TTF_RenderText_Blended(font, str, col);
-				ms[i].lines[j].size.x = text->w;
-				ms[i].lines[j].size.y = text->h;
-				ms[i].lines[j].tex = SDL_CreateTextureFromSurface(s->r, text);
-				SDL_FreeSurface(text);
-			} else {
-				ms[i].lines[j].tex = 0;
-			}
-		}
+		render_message(&ms[i], s->r, font, m, 3);
 	}
+
+	return SDL_TRUE;
 }
 
 static SDL_Texture *load_asset_tex(json_t *a, char const *root, SDL_Renderer *r, char const *k)
@@ -897,6 +931,26 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	json_decref(o);
 
 	return SDL_TRUE;
+}
+
+static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset)
+{
+	SDL_Surface *text;
+	SDL_Color col = {0, 0, 0, 255};
+
+	int j;
+	for (j = 0; j < MSG_LINES; j++) {
+		char const *str = json_string_value(json_array_get(m, offset + j));
+		if (str && *str) {
+			text = TTF_RenderText_Blended(font, str, col);
+			ms->lines[j].size.x = text->w;
+			ms->lines[j].size.y = text->h;
+			ms->lines[j].tex = SDL_CreateTextureFromSurface(r, text);
+			SDL_FreeSurface(text);
+		} else {
+			ms->lines[j].tex = 0;
+		}
+	}
 }
 
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a)
