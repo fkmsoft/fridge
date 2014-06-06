@@ -1,3 +1,5 @@
 *.swp
 /src/fridge
+/src/frigde.exe
 /src/json_test
+/src/json_test.exe

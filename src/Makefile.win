@@ -6,15 +6,15 @@ clean:
 	$(RM) json_test.exe fridge.exe
 
 json_test: LOADLIBES = -LC:\MinGW\msys\1.0\local\lib
-json_test: LDLIBS = -ljson-c
-json_test: CFLAGS += -Ic:\MinGW\msys\1.0\local\include\json-c
+json_test: LDLIBS = -ljansson
+json_test: CFLAGS += -Ic:\MinGW\msys\1.0\local\include -static
 json_test: json_test.c
 
 fridge: LOADLIBES = -LC:\MinGW\msys\1.0\local\lib \
 	-LC:\Users\toph\Desktop\SDL2-devel-2.0.3-mingw\SDL2-2.0.3\i686-w64-mingw32\lib \
 	-LC:\Users\toph\Desktop\SDL2_image-devel-2.0.0-mingw\SDL2_image-2.0.0\i686-w64-mingw32\lib
-fridge: LDLIBS = -ljson-c -lSDL2_image -lSDL2 -LSDL2main  -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lversion -luuid -static-libgcc
-fridge: CFLAGS += -Ic:\MinGW\msys\1.0\local\include\json-c \
+fridge: LDLIBS = -ljansson -lSDL2_image -lSDL2 -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lversion -luuid -static-libgcc
+fridge: CFLAGS += -Ic:\MinGW\msys\1.0\local\include \
 	-IC:\Users\toph\Desktop\SDL2-devel-2.0.3-mingw\SDL2-2.0.3\include \
 	-IC:\Users\toph\Desktop\SDL2_image-devel-2.0.0-mingw\SDL2_image-2.0.0\x86_64-w64-mingw32\include\SDL2 \
 	-DSDL_MAIN_HANDLED -static
