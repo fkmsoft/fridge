@@ -1,30 +1,56 @@
+#define _BSD_SOURCE 1
 #include <stdio.h>
+#include <string.h>
 #include <stdarg.h>
 
 #include <jansson.h>
 
 #include <SDL.h>
+#include <SDL_ttf.h>
 #include <SDL_image.h>
 
 #define TICK 80
-#define ROOTVAR "FRIDGE_ROOT"
-#define GAME_CONF "game.json"
 #define MAX_PATH 500
 
+#define MSG_LINES 2
+
+#define ROOTVAR "FRIDGE_ROOT"
+#define GAME_CONF "game.json"
 #define ASSET_DIR "assets"
 #define CONF_DIR "conf"
+
+#define streq(s1, s2) !strcmp(s1, s2)
+
+enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
+
+enum msg_frequency { MSG_ONCE, MSG_ALWAYS };
+static char const * const frq_names[] = { "once", "always" };
+
+enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, NSTATES };
+static char const * const st_names[] = { "idle", "walk", "fall", "jump" };
+
+typedef struct {
+	unsigned x;
+	unsigned y;
+} pos;
+
+typedef struct {
+	enum msg_frequency when;
+	pos pos;
+	char const *lines[MSG_LINES];
+} message;
 
 typedef struct {
 	SDL_Renderer *r;
 	SDL_Texture *background;
+	SDL_Texture *msg;
 	SDL_Surface *collision;
+	TTF_Font *font;
+	unsigned nmessages;
+	message *messages;
 	int w;
 	int h;
 } session;
-
-enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
-enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, NSTATES };
-char const * const st_names[] = { "idle", "walk", "fall", "jump" };
 
 typedef struct {
 	unsigned len;
@@ -65,6 +91,7 @@ typedef struct {
 	entity_state *objs;
 	unsigned nenemies;
 	entity_state *enemies;
+	message *msg;
 	SDL_bool run;
 } game_state;
 
@@ -96,11 +123,13 @@ static void clear_event(game_event *ev);
 
 static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
+static SDL_bool in_rect(pos const *p, SDL_Rect const *r);
 static void player_rect(SDL_Rect const *pos, SDL_Rect *r);
 
 /* low level interactions */
 static char const *get_asset(json_t *a, char const *k);
 static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r);
+static void load_messages(unsigned *n, message **msgs, json_t *o);
 static SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
 static SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k);
 static SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k);
@@ -108,6 +137,7 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
 static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p);
+static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, TTF_Font *font);
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s);
 static unsigned getpixel(SDL_Surface const *s, int x, int y);
 static char const *set_path(char const *fmt, ...);
@@ -167,7 +197,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 {
 	SDL_Window *window;
 	int i;
-	json_t *game, *player, *spawn, *entities;
+	json_t *game, *player, *spawn, *entities, *fnt;
 
 	char const *path;
 	path = set_path("%s/%s/%s", root, CONF_DIR, GAME_CONF);
@@ -178,12 +208,30 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
+	i = TTF_Init();
+	if (i < 0) {
+		fprintf(stderr, "error: could not init font library: %s\n", TTF_GetError());
+		return SDL_FALSE;
+	}
+
+	fnt = json_object_get(game, "font");
+	path = set_path("%s/%s/%s", root, ASSET_DIR, json_string_value(json_object_get(fnt, "resource")));
+	s->font = TTF_OpenFont(path, json_integer_value(json_object_get(fnt, "size")));
+	if (!s->font) {
+		fprintf(stderr, "error: could not load font %s: %s\n", path, TTF_GetError());
+		return SDL_FALSE;
+	}
+
+	load_messages(&s->nmessages, &s->messages, json_object_get(game, "messages"));
+	gs->msg = 0;
+
 	spawn = json_object_get(game, "resolution");
 	s->w = json_integer_value(json_array_get(spawn, 0));
 	s->h = json_integer_value(json_array_get(spawn, 1));
 
 	i = SDL_Init(SDL_INIT_VIDEO);
 	if (i < 0) {
+		fprintf(stderr, "error: could not init video: %s\n", SDL_GetError());
 		return SDL_FALSE;
 	}
 
@@ -198,6 +246,9 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	s->background = load_asset_tex(game, root, s->r, "background");
 	if (!s->background) { return SDL_FALSE; }
+
+	s->msg = load_asset_tex(game, root, s->r, "message");
+	if (!s->msg) { return SDL_FALSE; }
 
 	s->collision = load_asset_surf(game, root, "collision");
 	if (!s->collision) { return SDL_FALSE; }
@@ -366,9 +417,8 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 
 	for (i = 0; i < gs->nenemies; i++) {
 		tick_animation(&gs->enemies[i]);
-		int dir = (gs->enemies[i].dir == DIR_LEFT) ? -1 : 1;
 		int old_x = gs->enemies[i].pos.x;
-		gs->enemies[i].pos.x += dir * gs->enemies[i].rule->walk_dist;
+		gs->enemies[i].pos.x += gs->enemies[i].dir * gs->enemies[i].rule->walk_dist;
 		if (collides_with_terrain(&gs->enemies[i].pos, s->collision)) {
 			gs->enemies[i].pos.x = old_x;
 			gs->enemies[i].dir *= -1;
@@ -382,8 +432,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		gs->player.dir = ev->player.move_left ? DIR_LEFT : DIR_RIGHT;
 
 		int old_x = gs->player.pos.x;
-		int dir = (gs->player.dir == DIR_LEFT) ? -1 : 1;
-		gs->player.pos.x += dir * pr->walk_dist;
+		gs->player.pos.x += gs->player.dir * pr->walk_dist;
 
 		player_rect(&gs->player.pos, &r);
 
@@ -392,8 +441,8 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 			player_rect(&gs->player.pos, &r);
 			/*
 			do {
-				gs->player_x += dir;
-				r->x += dir;
+				gs->player_x += gs->player.dir;
+				r->x += gs->player.dir;
 			} while (!collides_with_terrain(&r, s->collision));
 			*/
 		}
@@ -448,6 +497,19 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		init_entity_state(&gs->player, 0, 0);
 	}
 
+	gs->msg = 0;
+	player_rect(&gs->player.pos, &r);
+	/*printf("%d %d\n", gs->player.pos.x, gs->player.pos.y);*/
+	/*printf("%d %d\n", r.x, r.y);*/
+	for (i = 0; i < s->nmessages; i++) {
+		if (in_rect(&s->messages[i].pos, &r)) {
+			gs->msg = &s->messages[i];
+			/*printf("hit message %d\n", i);*/
+		} else {
+			/*printf("not in %d %d\n", s->messages[i].pos.x, s->messages[i].pos.y);*/
+		}
+	}
+
 	if (ev->exit) {
 		gs->run = SDL_FALSE;
 	}
@@ -495,6 +557,10 @@ static void render(session const *s, game_state const *gs)
 
 	draw_player(s->r, &screen, &gs->player);
 
+	if (gs->msg) {
+		draw_message(s->r, s->msg, gs->msg, s->font);
+	}
+
 	SDL_RenderPresent(s->r);
 }
 
@@ -530,6 +596,12 @@ static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t)
 	int x = r->x + r->w / 2;
 
 	return getpixel(t, x, r->y + r->h + 1) == 0;
+}
+
+static SDL_bool in_rect(pos const *p, SDL_Rect const *r)
+{
+	return p->x >= r->x && p->x <= r->x + r->w &&
+	       p->y >= r->y && p->y <= r->y + r->h;
 }
 
 static void player_rect(SDL_Rect const *pos, SDL_Rect *r)
@@ -571,6 +643,32 @@ static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 
 	SDL_bool flip = p->dir == DIR_RIGHT;
 	SDL_RenderCopyEx(r, p->tex, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+}
+
+static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, TTF_Font *font)
+{
+	static SDL_Color col = {0, 0, 0, 255};
+	SDL_Rect dst = { x: (800 - 640) / 2, y: 600 - 160, w: 640, h: 160 };
+	SDL_RenderCopy(r, t, 0, &dst);
+
+	SDL_Surface *t0;
+	SDL_Texture *t1;
+
+	dst.x += 130;
+	dst.y += 60;
+
+	int i;
+	for (i = 0; i < MSG_LINES; i++) {
+		if (m->lines[i][0]) {
+			t0 = TTF_RenderText_Blended(font, m->lines[i], col);
+			t1 = SDL_CreateTextureFromSurface(r, t0);
+			dst.w = t0->w;
+			dst.h = t0->h;
+			SDL_RenderCopy(r, t1, 0, &dst);
+			SDL_FreeSurface(t0);
+			dst.y += 35;
+		}
+	}
 }
 
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s)
@@ -615,6 +713,30 @@ static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r)
 	*r = json_integer_value(var);
 
 	return SDL_TRUE;
+}
+
+static void load_messages(unsigned *n, message **msgs, json_t *o)
+{
+	if (!o) {
+		return;
+	}
+
+	int k = json_array_size(o);
+	*n = k;
+	message *ms = malloc(sizeof(message) * k);
+	*msgs = ms;
+
+	int i;
+	json_t *m;
+	json_array_foreach(o, i, m) {
+		ms[i] = (message) {
+			pos: { x: json_integer_value(json_array_get(m, 0)),
+		               y: json_integer_value(json_array_get(m, 1)) },
+		        when: streq(frq_names[MSG_ONCE], json_string_value(json_array_get(m, 2))) ?
+				MSG_ONCE : MSG_ALWAYS,
+			lines: { strdup(json_string_value(json_array_get(m, 3))),
+			         strdup(json_string_value(json_array_get(m, 4))) }};
+	}
 }
 
 static SDL_Texture *load_asset_tex(json_t *a, char const *root, SDL_Renderer *r, char const *k)

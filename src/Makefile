@@ -8,6 +8,6 @@ clean:
 json_test: LDLIBS = -ljansson
 json_test: json_test.c
 
-fridge: LDLIBS = `sdl2-config --libs` -lSDL2_image -ljansson
+fridge: LDLIBS = `sdl2-config --libs` -lSDL2_image -lSDL2_ttf -ljansson
 fridge: CFLAGS += `sdl2-config --cflags`
 fridge: fridge.c

@@ -8,7 +8,7 @@ Dependencies:
 
 * SDL2
 * SDL2_image
-* json-c
+* jansson
 
 Used Assets:
 * Burger by Gobusto: http://opengameart.org/content/burger (CC-BY-SA 3.0)
@@ -18,4 +18,4 @@ Used Assets:
 * Ghost Lvl1,2,3 (60px) by qubodup: http://opengameart.org/content/ghost-lvl1-2-3-60px (CC-BY-SA 3.0)
 
 Used Code:
-* getpixel from: http://sdl.beuc.net/sdl.wiki/Pixel_Access
+* getpixel() from: http://sdl.beuc.net/sdl.wiki/Pixel_Access
