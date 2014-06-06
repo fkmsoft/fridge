@@ -22,8 +22,8 @@
 
 enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
 
-enum msg_frequency { MSG_ONCE, MSG_ALWAYS };
-static char const * const frq_names[] = { "once", "always" };
+enum msg_frequency { MSG_NEVER, MSG_ONCE, MSG_ALWAYS };
+static char const * const frq_names[] = { "never", "once", "always" };
 
 enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, NSTATES };
 static char const * const st_names[] = { "idle", "walk", "fall", "jump" };
@@ -82,6 +82,7 @@ typedef struct {
 } animation_state;
 
 typedef struct {
+	SDL_bool active;
 	SDL_Rect pos;
 	SDL_Rect spawn;
 	enum dir dir;
@@ -93,11 +94,16 @@ typedef struct {
 } entity_state;
 
 typedef struct {
+	unsigned n;
+	entity_state *e;
+} group;
+
+enum group { GROUP_OBJECTS, GROUP_ENEMIES, NGROUPS };
+
+typedef struct {
+	int need_to_collect;
 	entity_state player;
-	unsigned nobjects;
-	entity_state *objs;
-	unsigned nenemies;
-	entity_state *enemies;
+	group entities[NGROUPS];
 	message *msg;
 	SDL_bool run;
 } game_state;
@@ -116,7 +122,7 @@ typedef struct {
 
 /* high level init */
 static SDL_bool init_game(session *s, game_state *g, char const *root);
-void init_group(unsigned *count, entity_state **arr, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules);
+void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules);
 static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t);
 
 /* high level game */
@@ -128,9 +134,11 @@ static void load_state(entity_state *es);
 static void render(session const *s, game_state const *gs);
 static void clear_event(game_event *ev);
 
+/* collisions */
 static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool in_rect(pos const *p, SDL_Rect const *r);
+static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
 static void player_rect(SDL_Rect const *pos, SDL_Rect *r);
 
 /* low level interactions */
@@ -288,8 +296,10 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		i += 1;
 	}
 
-	init_group(&gs->nobjects, &gs->objs, game, "objects", e_texs, e_rules);
-	init_group(&gs->nenemies, &gs->enemies, game, "enemies", e_texs, e_rules);
+	init_group(&gs->entities[GROUP_OBJECTS], game, "objects", e_texs, e_rules);
+	init_group(&gs->entities[GROUP_ENEMIES], game, "enemies", e_texs, e_rules);
+
+	gs->need_to_collect = gs->entities[GROUP_OBJECTS].n;
 
 	int pi;
 	player = json_object_get(entities, "player");
@@ -320,7 +330,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	return SDL_TRUE;
 }
 
-void init_group(unsigned *count, entity_state **arr, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules)
+void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules)
 {
 	json_t *objs, *entities;
 	entity_state *a;
@@ -328,8 +338,8 @@ void init_group(unsigned *count, entity_state **arr, json_t const *game, char co
 	entities = json_object_get(game, "entities");
 	objs = json_object_get(game, key);
 	if (!objs) {
-		*count = 0;
-		*arr = 0;
+		g->n = 0;
+		g->e = 0;
 		return;
 	}
 
@@ -342,9 +352,9 @@ void init_group(unsigned *count, entity_state **arr, json_t const *game, char co
 		k += json_array_size(o);
 	}
 
-	*count = k;
+	g->n = k;
 	a = malloc(sizeof(entity_state) * k);
-	*arr = a;
+	g->e = a;
 
 	i = 0;
 	json_t *spawn;
@@ -373,6 +383,7 @@ static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Textu
 		es->tex = t;
 	}
 
+	es->active = SDL_TRUE;
 	es->dir = DIR_LEFT;
 	es->st = start_state;
 	load_state(es);
@@ -416,17 +427,22 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 {
 	tick_animation(&gs->player);
 	int i;
-	for (i = 0; i < gs->nobjects; i++) {
-		tick_animation(&gs->objs[i]);
+	enum group g;
+	for (g = 0; g < NGROUPS; g++) {
+		for (i = 0; i < gs->entities[g].n; i++) {
+			if (gs->entities[g].e[i].active) {
+				tick_animation(&gs->entities[g].e[i]);
+			}
+		}
 	}
 
-	for (i = 0; i < gs->nenemies; i++) {
-		tick_animation(&gs->enemies[i]);
-		int old_x = gs->enemies[i].pos.x;
-		gs->enemies[i].pos.x += gs->enemies[i].dir * gs->enemies[i].rule->walk_dist;
-		if (collides_with_terrain(&gs->enemies[i].pos, s->collision)) {
-			gs->enemies[i].pos.x = old_x;
-			gs->enemies[i].dir *= -1;
+	group *nmi = &gs->entities[GROUP_ENEMIES];
+	for (i = 0; i < nmi->n; i++) {
+		int old_x = nmi->e[i].pos.x;
+		nmi->e[i].pos.x += nmi->e[i].dir * nmi->e[i].rule->walk_dist;
+		if (collides_with_terrain(&nmi->e[i].pos, s->collision)) {
+			nmi->e[i].pos.x = old_x;
+			nmi->e[i].dir *= -1;
 		}
 	}
 
@@ -507,11 +523,40 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	/*printf("%d %d\n", gs->player.pos.x, gs->player.pos.y);*/
 	/*printf("%d %d\n", r.x, r.y);*/
 	for (i = 0; i < s->msg.n; i++) {
+		if (s->msg.msgs[i].when == MSG_NEVER) {
+			continue;
+		}
+
 		if (in_rect(&s->msg.msgs[i].pos, &r)) {
 			gs->msg = &s->msg.msgs[i];
+			if (s->msg.msgs[i].when == MSG_ONCE) {
+				s->msg.msgs[i].when = MSG_NEVER;
+			}
 			/*printf("hit message %d\n", i);*/
 		} else {
 			/*printf("not in %d %d\n", s->messages[i].pos.x, s->messages[i].pos.y);*/
+		}
+	}
+
+	for (g = 0; g < NGROUPS; g++) {
+		for (i = 0; i < gs->entities[g].n; i++) {
+			if (!gs->entities[g].e[i].active) {
+				continue;
+			}
+
+			if (have_collision(&r, &gs->entities[g].e[i].pos)) {
+				switch (g) {
+				case GROUP_OBJECTS:
+					gs->entities[g].e[i].active = SDL_FALSE;
+					gs->need_to_collect -= 1;
+					break;
+				case GROUP_ENEMIES:
+					init_entity_state(&gs->player, 0, 0);
+					break;
+				case NGROUPS:
+					fprintf(stderr,"line %d: can never happen\n", __LINE__);
+				}
+			}
 		}
 	}
 
@@ -552,12 +597,13 @@ static void render(session const *s, game_state const *gs)
 	SDL_Rect screen = { x: gs->player.pos.x, y: gs->player.pos.y, w: s->w, h: s->h };
 
 	draw_background(s->r, s->background, &screen);
-	for (i = 0; i < gs->nobjects; i++) {
-		draw_entity(s->r, &screen, &gs->objs[i]);
-	}
-
-	for (i = 0; i < gs->nenemies; i++) {
-		draw_entity(s->r, &screen, &gs->enemies[i]);
+	int g;
+	for (g = 0; g < NGROUPS; g++) {
+		for (i = 0; i < gs->entities[g].n; i++) {
+			if (gs->entities[g].e[i].active) {
+				draw_entity(s->r, &screen, &gs->entities[g].e[i]);
+			}
+		}
 	}
 
 	draw_player(s->r, &screen, &gs->player);
@@ -578,6 +624,7 @@ static void clear_event(game_event *ev)
 	ev->reset =SDL_FALSE;
 }
 
+/* collisions */
 static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t)
 {
 	int x = r->x;
@@ -603,11 +650,29 @@ static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t)
 	return getpixel(t, x, r->y + r->h + 1) == 0;
 }
 
+#define between(x, y1, y2) (x >= y1 && x <= y2)
 static SDL_bool in_rect(pos const *p, SDL_Rect const *r)
 {
-	return p->x >= r->x && p->x <= r->x + r->w &&
-	       p->y >= r->y && p->y <= r->y + r->h;
+	return between(p->x, r->x, r->x + r->w) &&
+	       between(p->y, r->y, r->y + r->h);
 }
+
+static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
+{
+	int lf1 = r1->x;
+	int rt1 = lf1 + r1->w;
+	int tp1 = r1->y;
+	int bt1 = tp1 + r1->h;
+
+	int lf2 = r2->x;
+	int rt2 = lf2 + r2->w;
+	int tp2 = r2->y;
+	int bt2 = tp2 + r2->h;
+
+	return (between(lf1, lf2, rt2) || between(rt1, lf2, rt2)) &&
+	       (between(tp1, tp2, bt2) || between(bt1, tp2, bt2));
+}
+#undef between
 
 static void player_rect(SDL_Rect const *pos, SDL_Rect *r)
 {
