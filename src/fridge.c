@@ -11,6 +11,8 @@
 struct session {
 	SDL_Renderer *r;
 	SDL_Texture *player;
+	unsigned nobjects;
+	SDL_Texture **objs;
 	SDL_Texture *background;
 	SDL_Surface *collision;
 	int w;
@@ -34,13 +36,12 @@ struct entity_rule {
 };
 
 struct game_rules {
-	int start_x;
-	int start_y;
 	int walk_dist;
 	int jump_dist;
 	int jump_time;
 	int fall_dist;
 	struct entity_rule player;
+	struct entity_rule *objs;
 };
 
 struct animation_state {
@@ -59,6 +60,7 @@ struct entity_state {
 
 struct game_state {
 	struct entity_state player;
+	struct entity_state *objs;
 	SDL_bool run;
 };
 
@@ -82,6 +84,7 @@ typedef struct game_event game_event;
 /* high level init */
 SDL_bool init_session(session *s, char const *root);
 SDL_bool init_game(session *s, game_rules *r, game_state *g, char const *root);
+void init_entity_state(struct entity_state *es, struct entity_rule const *er);
 
 /* high level game */
 void process_event(SDL_Event const *ev, game_event *r);
@@ -102,10 +105,11 @@ SDL_bool get_int_field(json_t *o, char const *s, int *r);
 SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
 SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k);
 SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k);
-SDL_bool load_entity_resource(json_t *src, SDL_Texture **t, SDL_Renderer *r, struct entity_rule *er, char const *root);
-void load_anim(json_t *src, char const *key, struct animation_rule *a);
-void draw_background(SDL_Renderer *r, SDL_Texture *bg, int x, int y);
+SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, struct entity_rule *er, char const *root);
+void load_anim(json_t *src, char const *name, char const *key, struct animation_rule *a);
+void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
 void draw_player(SDL_Renderer *r, SDL_Texture *pl, unsigned int frame, SDL_bool flip);
+void draw_entity(SDL_Renderer *r, SDL_Texture *t, SDL_Rect const *scr, struct entity_state const *s);
 unsigned getpixel(SDL_Surface const *s, int x, int y);
 
 int main(void) {
@@ -205,11 +209,38 @@ SDL_bool init_session(session *s, char const *root)
 
 SDL_bool init_game(session *s, game_rules *gr, game_state *gs, char const *root)
 {
-	json_t *game, *player, *start;
+	json_t *game, *player, *start, *objs;
 
 	char buf[500];
 	sprintf(buf, "%s/%s/%s", root, "conf", "game.json");
 	game = json_load_file(buf, 0, 0);
+
+	objs = json_object_get(game, "objects");
+	if (!objs) {
+		s->nobjects = 0;
+		s->objs = 0;
+		gr->objs = 0;
+		gs->objs = 0;
+	} else {
+		int k;
+		k = json_object_size(objs);
+		s->nobjects = k;
+		s->objs = malloc(sizeof(SDL_Texture *) * k);
+		gr->objs = malloc(sizeof(struct entity_rule) * k);
+		gs->objs = malloc(sizeof(struct entity_state) * k);
+
+		int i = 0;
+		char const *name;
+		json_t *o;
+		json_object_foreach(objs, name, o) {
+			start = json_object_get(o, "start");
+			gr->objs[i].start_dim.x = json_integer_value(json_array_get(start, 0));
+			gr->objs[i].start_dim.y = json_integer_value(json_array_get(start, 1));
+			load_entity_resource(o, name, &s->objs[i], s->r, &gr->objs[i], root);
+			init_entity_state(&gs->objs[i], &gr->objs[i]);
+			i += 1;
+		}
+	}
 
 	player = json_object_get(game, "player");
 	if (!player) {
@@ -223,8 +254,8 @@ SDL_bool init_game(session *s, game_rules *gr, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
-	gr->start_x = json_integer_value(json_array_get(start, 0));
-	gr->start_y = json_integer_value(json_array_get(start, 1));
+	gr->player.start_dim.x = json_integer_value(json_array_get(start, 0));
+	gr->player.start_dim.y = json_integer_value(json_array_get(start, 1));
 
 	SDL_bool ok;
 	ok = get_int_field(player, "walk_dist", &gr->walk_dist);
@@ -236,7 +267,7 @@ SDL_bool init_game(session *s, game_rules *gr, game_state *gs, char const *root)
 	ok = get_int_field(player, "fall_dist", &gr->fall_dist);
 	if (!ok) { return SDL_FALSE; }
 
-        ok = load_entity_resource(player, &s->player, s->r, &gr->player, root);
+        ok = load_entity_resource(player, "player", &s->player, s->r, &gr->player, root);
 	if (!ok) {
 		fprintf(stderr, "no player resource\n");
 		return SDL_FALSE;
@@ -244,18 +275,23 @@ SDL_bool init_game(session *s, game_rules *gr, game_state *gs, char const *root)
 
 	json_decref(game);
 
-	gs->player.dir = DIR_LEFT;
-	gs->player.st = ST_IDLE;
-	gs->player.pos.x = gr->start_x;
-	gs->player.pos.y = gr->start_y;
+	init_entity_state(&gs->player, &gr->player);
 	gs->run = SDL_TRUE;
-	gs->player.anim.frame = 0;
-	gs->player.anim.remaining = 1;
-	gs->player.jump_timeout = 0;
 
 	return SDL_TRUE;
 }
 
+void init_entity_state(struct entity_state *es, struct entity_rule const *er)
+{
+	enum state start_state = ST_IDLE;
+
+	es->dir = DIR_LEFT;
+	es->st = start_state;
+	load_state(es, &er->anim[start_state]);
+	es->pos.x = er->start_dim.x;
+	es->pos.y = er->start_dim.y;
+	es->jump_timeout = 0;
+}
 
 /* high level game */
 void process_event(SDL_Event const *ev, game_event *r)
@@ -291,6 +327,10 @@ void process_keystate(unsigned char const *ks, game_event *r)
 void update_gamestate(session const *s, game_rules const *gr, game_state *gs, game_event const *ev)
 {
 	tick_animation(&gs->player.anim, &gr->player.anim[gs->player.st]);
+	int i;
+	for (i = 0; i < s->nobjects; i++) {
+		tick_animation(&gs->objs[i].anim, &gr->objs[i].anim[gs->objs[i].st]);
+	}
 
 	SDL_Rect r;
 	if (ev->player.move_left || ev->player.move_right) {
@@ -339,13 +379,13 @@ void update_gamestate(session const *s, game_rules const *gr, game_state *gs, ga
 
 	enum state old_state = gs->player.st;
 	player_rect(&gs->player.pos, &r);
-	if (!stands_on_terrain(&r, s->collision)) {
-
-		gs->player.st = ST_FALL;
-
-	} else if (gs->player.jump_timeout > 0) {
+	if (gs->player.jump_timeout > 0) {
 
 		gs->player.st = ST_JUMP;
+
+	} else if (!stands_on_terrain(&r, s->collision)) {
+
+		gs->player.st = ST_FALL;
 
 	} else if (ev->player.move_left || ev->player.move_right) {
 
@@ -360,8 +400,7 @@ void update_gamestate(session const *s, game_rules const *gr, game_state *gs, ga
 	}
 
 	if (ev->reset) {
-		gs->player.pos.x = gr->start_x;
-		gs->player.pos.y = gr->start_y;
+		init_entity_state(&gs->player, &gr->player);
 	}
 
 	if (ev->exit) {
@@ -390,9 +429,15 @@ void load_state(struct entity_state *es, struct animation_rule const *ar)
 
 void render(session const *s, game_state const *gs)
 {
+	int i;
 	SDL_RenderClear(s->r);
 
-	draw_background(s->r, s->background, gs->player.pos.x, gs->player.pos.y);
+	SDL_Rect screen = { x: gs->player.pos.x, y: gs->player.pos.y, w: s->w, h: s->h };
+
+	draw_background(s->r, s->background, &screen);
+	for (i = 0; i < s->nobjects; i++) {
+		draw_entity(s->r, s->objs[i], &screen, &gs->objs[i]);
+	}
 	draw_player(s->r, s->player, gs->player.anim.frame, gs->player.dir == DIR_RIGHT);
 
 	SDL_RenderPresent(s->r);
@@ -457,20 +502,26 @@ SDL_Texture *load_texture(SDL_Renderer *r, char const *file)
 	return tex;
 }
 
-void draw_background(SDL_Renderer *r, SDL_Texture *bg, int x, int y)
+void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen)
 {
-	SDL_Rect src = { x: x, y: y, w: 800, h: 600 };
-
-	SDL_RenderCopy(r, bg, &src, 0);
+	SDL_RenderCopy(r, bg, screen, 0);
 }
 
 void draw_player(SDL_Renderer *r, SDL_Texture *pl, unsigned int frame, SDL_bool flip)
 {
 	SDL_Rect src = { x: frame * 32, y: 0, w: 32, h: 64 };
-	/*SDL_Rect dst = { x: 400 - 16, y: 300 - 32, w: 32, h: 64 };*/
-	SDL_Rect dst = { 400 - 16, 300 - 32, 32, 64 };
+	SDL_Rect dst = { x: 400 - 16, y: 300 - 32, w: 32, h: 64 };
 
 	SDL_RenderCopyEx(r, pl, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+}
+
+void draw_entity(SDL_Renderer *r, SDL_Texture *t, SDL_Rect const *scr, struct entity_state const *s)
+{
+	SDL_Rect src = { x: s->anim.frame * 32, y: 0, w: 32, h: 64 };
+	SDL_Rect dst = { x: s->pos.x - scr->x, y: s->pos.y - scr->y, w: 32, h: 64 };
+
+	SDL_bool flip = s->dir == DIR_RIGHT;
+	SDL_RenderCopyEx(r, t, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
 }
 
 char const *get_asset(json_t *a, char const *k)
@@ -528,7 +579,7 @@ SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k)
 	return IMG_Load(p);
 }
 
-SDL_bool load_entity_resource(json_t *src, SDL_Texture **t, SDL_Renderer *r, struct entity_rule *er, char const *root)
+SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, struct entity_rule *er, char const *root)
 {
 	json_t *o;
 	char const *ps;
@@ -546,7 +597,7 @@ SDL_bool load_entity_resource(json_t *src, SDL_Texture **t, SDL_Renderer *r, str
 
 	int i;
 	for (i = 0; i < NSTATES; i++) {
-		load_anim(o, st_names[i], &er->anim[i]);
+		load_anim(o, n, st_names[i], &er->anim[i]);
 	}
 
 	json_decref(o);
@@ -554,12 +605,12 @@ SDL_bool load_entity_resource(json_t *src, SDL_Texture **t, SDL_Renderer *r, str
 	return SDL_TRUE;
 }
 
-void load_anim(json_t *src, char const *key, struct animation_rule *a)
+void load_anim(json_t *src, char const *name, char const *key, struct animation_rule *a)
 {
 	json_t *o, *frames, *dur, *box;
 	o = json_object_get(src, key);
 	if (!o) {
-		fprintf(stderr, "warning: no %s animation\n", key);
+		fprintf(stderr, "warning: no %s animation for %s\n", key, name);
 		return;
 	}
 
