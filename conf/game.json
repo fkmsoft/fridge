@@ -5,6 +5,9 @@
   "intro": "start_ani.gif",
   "resolution": [800, 600],
   "spawn": [162, 710],
+  "finish": { "pos": [449, 1246],
+              "win": ["I made it!", "Yay!"],
+              "loss": ["I need to collect", "more stuff..."]},
   "font": { "resource": "toonish.ttf", "size": 38 },
   "entities": { "disc":   { "resource": "disc.json"   },
                 "burger": { "resource": "burger.json" },
@@ -31,5 +34,4 @@
                [1081,  440,   "once", "Why is Veggie-burger", "up here?"],
                [1561,  705, "always", "My PC is unbreakable", "with my DOS floppy!"],
                [1393,  987,   "once", "Yummy, old pizza!", ""],
-               [1585, 1206, "always", "Are all my TVs broken", "or what?"],
-               [ 449, 1246, "always", "finish", ""]]}
+               [1585, 1206, "always", "Are all my TVs broken", "or what?"]]}
