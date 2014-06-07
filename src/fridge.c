@@ -175,7 +175,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev);
 static void tick_animation(entity_state *as);
 static void set_group_state(group *g, enum state st);
 static int entity_walk(entity_state *e, SDL_Surface const *terrain);
-static int player_walk(entity_state *p, SDL_Surface const *terrain, pos const *screen);
+static int player_walk(entity_state *p, SDL_Surface const *terrain, pos const *screen, int max_dist);
 static void enemy_movement(SDL_Surface const *terrain, group *nmi);
 static void load_state(entity_state *es);
 static void render(session const *s, game_state const *gs);
@@ -627,7 +627,9 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		enum dir old_dir = gs->player.dir;
 		gs->player.dir = ev->player.move_left ? DIR_LEFT : DIR_RIGHT;
 		mlog.turned = old_dir != gs->player.dir;
-		mlog.walked = player_walk(&gs->player, s->collision, &s->screen) * gs->player.dir;
+		if (!(gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_HIGH)) {
+		mlog.walked = player_walk(&gs->player, s->collision, &s->screen, gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE ? 9 : pr->walk_dist) * gs->player.dir;
+		}
 	}
 
 	if (ev->player.move_jump && gs->player.st != ST_FALL && gs->player.st != ST_JUMP) {
@@ -635,9 +637,13 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		gs->player.jump_type = (ev->player.move_left || ev->player.move_right) ? JUMP_WIDE : JUMP_HIGH;
 	}
 
+	if (gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE && mlog.walked == 0) {
+		gs->player.jump_timeout = 0;
+	}
+	
 	if (gs->player.jump_timeout > 0) {
 		gs->player.jump_timeout -= 1;
-
+		
 		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
 		double a = (gs->player.jump_type == JUMP_WIDE) ?
@@ -657,7 +663,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 	} else {
 		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
-		for (f = pr->fall_dist + gs->player.fall_time; f > 0; f--) {
+		for (f = pr->fall_dist + 0.3 * gs->player.fall_time; f > 0; f--) {
 			if (stands_on_terrain(&r, s->collision)) {
 				gs->player.fall_time = 0;
 				break;
@@ -800,10 +806,10 @@ static int entity_walk(entity_state *e, SDL_Surface const *terrain)
 	return dst;
 }
 
-static int player_walk(entity_state *p, SDL_Surface const *terrain, pos const *screen)
+static int player_walk(entity_state *p, SDL_Surface const *terrain, pos const *screen, int max_dist)
 {
 	int old_x = p->pos.x;
-	p->pos.x += p->dir * p->rule->walk_dist;
+	p->pos.x += p->dir * max_dist;
 
 	SDL_Rect r;
 	player_hitbox(p, screen, &r);
@@ -822,7 +828,7 @@ static int player_walk(entity_state *p, SDL_Surface const *terrain, pos const *s
 			dst += 1;
 		}
 	} else {
-		dst = p->rule->walk_dist;
+		dst = max_dist;
 	}
 
 	return dst;

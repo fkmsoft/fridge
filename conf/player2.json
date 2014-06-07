@@ -8,7 +8,7 @@
             "duration": [1, 1, 1,  1,  1,  1], 
             "box":      [4, 5, 25, 58] },
   "jump": { "frames":   [13, 14], 
-            "duration": [ 2, 100],
+            "duration": [ 1, 100],
 			"box":      [3, 13, 28, 50] },
   "fall": { "frames":   [15], 
             "duration": [1], 
