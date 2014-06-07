@@ -1,0 +1,6 @@
+{ "asset": "start_ani.gif",
+  "frame_size": [640, 480],
+  "frame_count": 6,
+  "idle": { "frames":    [0, 1, 2, 3, 4, 5],
+            "duration":  [1, 1, 1, 1, 1, 1],
+            "box": [0,  0, 640, 480] }}

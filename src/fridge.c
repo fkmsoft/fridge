@@ -21,6 +21,7 @@
 #define streq(s1, s2) !strcmp(s1, s2)
 
 enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
+enum mode { MODE_LOGO, MODE_INTRO, MODE_GAME, MODE_EXIT };
 
 enum msg_frequency { MSG_NEVER, MSG_ONCE, MSG_ALWAYS };
 static char const * const frq_names[] = { "never", "once", "always" };
@@ -109,9 +110,11 @@ enum group { GROUP_OBJECTS, GROUP_ENEMIES, NGROUPS };
 typedef struct {
 	int need_to_collect;
 	entity_state player;
+	entity_state logo;
+	entity_state intro;
 	group entities[NGROUPS];
 	message const *msg;
-	SDL_bool run;
+	enum mode run;
 } game_state;
 
 typedef struct {
@@ -123,13 +126,15 @@ typedef struct {
 typedef struct {
 	entity_event player;
 	SDL_bool exit;
+	SDL_bool keyboard;
 	SDL_bool reset;
 } game_event;
 
 /* high level init */
 static SDL_bool init_game(session *s, game_state *g, char const *root);
-void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules);
-static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t);
+static void load_intro(entity_state *intro, session const *s, json_t *o, char const *k, entity_rule const *e_rules, SDL_Texture **e_texs);
+void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st);
+static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st);
 
 /* high level game */
 static void process_event(SDL_Event const *ev, game_event *r);
@@ -187,7 +192,7 @@ int main(void) {
 
 	int have_ev;
 	SDL_Event event;
-	while (gs.run) {
+	while (gs.run != MODE_EXIT) {
 		have_ev = SDL_PollEvent(&event);
 		if (have_ev) {
 			process_event(&event, &ge);
@@ -308,8 +313,8 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		i += 1;
 	}
 
-	init_group(&gs->entities[GROUP_OBJECTS], game, "objects", e_texs, e_rules);
-	init_group(&gs->entities[GROUP_ENEMIES], game, "enemies", e_texs, e_rules);
+	init_group(&gs->entities[GROUP_OBJECTS], game, "objects", e_texs, e_rules, ST_IDLE);
+	init_group(&gs->entities[GROUP_ENEMIES], game, "enemies", e_texs, e_rules, ST_WALK);
 
 	gs->need_to_collect = gs->entities[GROUP_OBJECTS].n;
 
@@ -329,20 +334,41 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	gs->player.spawn.x = json_integer_value(json_array_get(spawn, 0));
 	gs->player.spawn.y = json_integer_value(json_array_get(spawn, 1));
-	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi]);
+	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi], ST_IDLE);
+
+	load_intro(&gs->logo, s, entities, "logo", e_rules, e_texs);
+	load_intro(&gs->intro, s, entities, "intro", e_rules, e_texs);
 
 	/* all texture pointers are copied by value, no need to hold onto the
 	 * e_texs buffer */
 	free(e_texs);
 
-	gs->run = SDL_TRUE;
+	gs->run = gs->logo.active ? MODE_LOGO : gs->intro.active ? MODE_INTRO : MODE_GAME;
 
 	json_decref(game);
 
 	return SDL_TRUE;
 }
 
-void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules)
+static void load_intro(entity_state *intro, session const *s, json_t *o, char const *k, entity_rule const *e_rules, SDL_Texture **e_texs)
+{
+	json_t *io;
+	io = json_object_get(o, k);
+	if (!io) {
+		fprintf(stderr, "warning: no intro found for `%s'\n", k);
+		intro->active = SDL_FALSE;
+	} else {
+		int i = json_integer_value(json_object_get(io, "index"));
+		// TODO
+		intro->spawn.w = 640;
+		intro->spawn.h = 480;
+		intro->spawn.x = (s->screen.x - 640) / 2;
+		intro->spawn.y = (s->screen.y - 480) / 2;
+		init_entity_state(intro, &e_rules[i], e_texs[i], ST_IDLE);
+	}
+}
+
+void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st)
 {
 	json_t *objs, *entities;
 	entity_state *a;
@@ -378,16 +404,16 @@ void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_t
 		json_array_foreach(o, j, spawn) {
 			a[i].spawn.x = json_integer_value(json_array_get(spawn, 0));
 			a[i].spawn.y = json_integer_value(json_array_get(spawn, 1));
-			init_entity_state(&a[i], &e_rules[ei], e_texs[ei]);
+			a[i].spawn.w = 32; // TODO
+			a[i].spawn.h = 64;
+			init_entity_state(&a[i], &e_rules[ei], e_texs[ei], st);
 			i += 1;
 		}
 	}
 }
 
-static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t)
+static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st)
 {
-	enum state start_state = ST_IDLE;
-
 	if (!er) {
 		er = es->rule;
 	} else {
@@ -397,7 +423,7 @@ static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Textu
 
 	es->active = SDL_TRUE;
 	es->dir = DIR_LEFT;
-	es->st = start_state;
+	es->st = st;
 	load_state(es);
 	es->pos.x = es->spawn.x;
 	es->pos.y = es->spawn.y;
@@ -414,6 +440,7 @@ static void process_event(SDL_Event const *ev, game_event *r)
 		r->exit = SDL_TRUE;
 		break;
 	case SDL_KEYUP:
+		r->keyboard = SDL_TRUE;
 		switch(key) {
 		case SDLK_q:
 			r->exit = SDL_TRUE;
@@ -431,12 +458,34 @@ static void process_event(SDL_Event const *ev, game_event *r)
 
 static void process_keystate(unsigned char const *ks, game_event *r)
 {
-	if (ks[SDL_SCANCODE_LEFT]) { r->player.move_left = SDL_TRUE; }
+	if (ks[SDL_SCANCODE_LEFT ]) { r->player.move_left  = SDL_TRUE; }
 	if (ks[SDL_SCANCODE_RIGHT]) { r->player.move_right = SDL_TRUE; }
 }
 
 static void update_gamestate(session const *s, game_state *gs, game_event const *ev)
 {
+	if (gs->run == MODE_LOGO ) {
+
+		tick_animation(&gs->logo );
+
+		if (gs->logo.anim.pos == gs->logo.rule->anim[ST_IDLE].len - 1) {
+			gs->run = MODE_INTRO;
+		}
+	}
+
+	if (gs->run == MODE_INTRO) {
+
+		tick_animation(&gs->intro);
+
+		if (ev->keyboard) {
+			gs->run = MODE_GAME;
+		}
+	}
+
+	if (gs->run != MODE_GAME) {
+		return;
+	}
+
 	tick_animation(&gs->player);
 	int i;
 	enum group g;
@@ -527,7 +576,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	}
 
 	if (ev->reset) {
-		init_entity_state(&gs->player, 0, 0);
+		init_entity_state(&gs->player, 0, 0, ST_IDLE);
 	}
 
 	gs->msg = 0;
@@ -563,7 +612,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 					gs->need_to_collect -= 1;
 					break;
 				case GROUP_ENEMIES:
-					init_entity_state(&gs->player, 0, 0);
+					init_entity_state(&gs->player, 0, 0, ST_IDLE);
 					break;
 				case NGROUPS:
 					fprintf(stderr,"line %d: can never happen\n", __LINE__);
@@ -582,7 +631,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	}
 
 	if (ev->exit) {
-		gs->run = SDL_FALSE;
+		gs->run = MODE_EXIT;
 	}
 }
 
@@ -617,20 +666,34 @@ static void render(session const *s, game_state const *gs)
 
 	SDL_Rect screen = { x: gs->player.pos.x, y: gs->player.pos.y, w: s->screen.x, h: s->screen.y };
 
-	draw_background(s->r, s->background, &screen);
-	int g;
-	for (g = 0; g < NGROUPS; g++) {
-		for (i = 0; i < gs->entities[g].n; i++) {
-			if (gs->entities[g].e[i].active) {
-				draw_entity(s->r, &screen, &gs->entities[g].e[i]);
+	switch (gs->run) {
+	case MODE_LOGO:
+		screen.x = screen.y = 0;
+		draw_entity(s->r, &screen, &gs->logo);
+		break;
+	case MODE_INTRO:
+		screen.x = screen.y = 0;
+		draw_entity(s->r, &screen, &gs->intro);
+		break;
+	case MODE_GAME:
+		draw_background(s->r, s->background, &screen);
+		int g;
+		for (g = 0; g < NGROUPS; g++) {
+			for (i = 0; i < gs->entities[g].n; i++) {
+				if (gs->entities[g].e[i].active) {
+					draw_entity(s->r, &screen, &gs->entities[g].e[i]);
+				}
 			}
 		}
-	}
 
-	draw_player(s->r, &screen, &gs->player);
+		draw_player(s->r, &screen, &gs->player);
 
-	if (gs->msg) {
-		draw_message(s->r, s->msg.tex, gs->msg, &s->msg.box, &s->msg.line);
+		if (gs->msg) {
+			draw_message(s->r, s->msg.tex, gs->msg, &s->msg.box, &s->msg.line);
+		}
+		break;
+	case MODE_EXIT:
+		puts("bye");
 	}
 
 	SDL_RenderPresent(s->r);
@@ -642,6 +705,7 @@ static void clear_event(game_event *ev)
 	ev->player.move_right = SDL_FALSE;
 	ev->player.move_jump = SDL_FALSE;
 	ev->exit = SDL_FALSE;
+	ev->keyboard = SDL_FALSE;
 	ev->reset =SDL_FALSE;
 }
 
@@ -697,6 +761,7 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 
 static void player_rect(SDL_Rect const *pos, SDL_Rect *r)
 {
+	// TODO
 	r->x = pos->x + 400 - 9;
 	r->y = pos->y + 300 - 25;
 	r->w = /*pos->w*/ 18;
@@ -758,8 +823,14 @@ static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 	entity_rule const *rl = s->rule;
 	int w = rl->start_dim.w;
 	int h = rl->start_dim.h;
-	SDL_Rect src = { x: s->anim.frame * 32, y: 0, w: w, h: h };
+	SDL_Rect src = { x: s->anim.frame * s->spawn.w, y: 0, w: w, h: h };
 	SDL_Rect dst = { x: s->pos.x - scr->x, y: s->pos.y - scr->y, w: w, h: h };
+	/*
+	printf("%d %d %d\n", s->anim.frame, s->pos.w, src.x);
+	printf("src %d %d %d %d\n", src.x, src.y, src.w, src.h);
+	printf("dst %d %d %d %d\n", dst.x, dst.y, dst.w, dst.h);
+	printf("%d %d\n", s->pos.x, scr->x);
+	*/
 
 	SDL_bool flip = s->dir == DIR_RIGHT;
 	SDL_RenderCopyEx(r, s->tex, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
