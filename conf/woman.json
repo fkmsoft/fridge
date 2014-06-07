@@ -1,6 +1,9 @@
 { "asset": "player2.gif",
   "frame_size": [32, 64],
-  "frame_count": 6,
+  "frame_count": 13,
   "idle": { "frames":   [0, 1],
             "duration": [5, 5],
-			"box":      [5, 5, 18, 58] }}
+			"box":      [5, 5, 18, 58] },
+  "walk": { "frames":   [9, 10, 7, 8], 
+            "duration": [2, 2,  2, 2], 
+			"box":      [5,  6, 18, 57] }}
