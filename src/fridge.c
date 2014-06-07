@@ -373,6 +373,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	gs->run = gs->logo.active ? MODE_LOGO : gs->intro.active ? MODE_INTRO : MODE_GAME;
 	clear_debug(&gs->debug);
 	gs->debug.terrain_collision = SDL_CreateTextureFromSurface(s->r, s->collision);
+	SDL_SetTextureAlphaMod(gs->debug.terrain_collision, 100);
 
 	json_decref(game);
 
