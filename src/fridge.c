@@ -109,6 +109,15 @@ typedef struct {
 enum group { GROUP_OBJECTS, GROUP_ENEMIES, NGROUPS };
 
 typedef struct {
+	SDL_bool active;
+	SDL_bool frames;
+	SDL_bool hitboxes;
+	SDL_bool pause;
+	SDL_bool show_terrain_collision;
+	SDL_Texture *terrain_collision;
+} debug_state;
+
+typedef struct {
 	int need_to_collect;
 	entity_state player;
 	entity_state logo;
@@ -117,8 +126,7 @@ typedef struct {
 	message const *msg;
 	unsigned msg_timeout;
 	enum mode run;
-	SDL_bool debug;
-	SDL_bool pause;
+	debug_state debug;
 } game_state;
 
 typedef struct {
@@ -131,6 +139,7 @@ typedef struct {
 	entity_event player;
 	SDL_bool toggle_pause;
 	SDL_bool toggle_debug;
+	SDL_bool toggle_terrain;
 	SDL_bool exit;
 	SDL_bool keyboard;
 	SDL_bool reset;
@@ -152,6 +161,7 @@ static void enemy_movement(SDL_Surface const *terrain, group *nmi);
 static void load_state(entity_state *es);
 static void render(session const *s, game_state const *gs);
 static void clear_event(game_event *ev);
+static void clear_debug(debug_state *d);
 
 /* collisions */
 static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
@@ -173,9 +183,9 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset);
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
-static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, SDL_bool debug);
+static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, debug_state const *debug);
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line);
-static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, SDL_bool debug);
+static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
 static unsigned getpixel(SDL_Surface const *s, int x, int y);
 static char const *set_path(char const *fmt, ...);
 
@@ -361,8 +371,8 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	/* init game_state flags */
 	gs->run = gs->logo.active ? MODE_LOGO : gs->intro.active ? MODE_INTRO : MODE_GAME;
-	gs->debug = SDL_FALSE;
-	gs->pause = SDL_FALSE;
+	clear_debug(&gs->debug);
+	gs->debug.terrain_collision = SDL_CreateTextureFromSurface(s->r, s->collision);
 
 	json_decref(game);
 
@@ -464,6 +474,9 @@ static void process_event(SDL_Event const *ev, game_event *r)
 		case SDLK_q:
 			r->exit = SDL_TRUE;
 			break;
+		case SDLK_b:
+			r->toggle_terrain = SDL_TRUE;
+			break;
 		case SDLK_p:
 			r->toggle_pause = SDL_TRUE;
 			break;
@@ -513,12 +526,16 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	}
 
 	if (ev->toggle_debug) {
-		gs->debug = !gs->debug;
+		gs->debug.active = !gs->debug.active;
 	}
 
-	if (gs->debug && ev->toggle_pause) {
-		gs->pause = !gs->pause;
-		set_group_state(&gs->entities[GROUP_ENEMIES], gs->pause ? ST_IDLE : ST_WALK);
+	if (ev->toggle_pause && gs->debug.active) {
+		gs->debug.pause = !gs->debug.pause;
+		set_group_state(&gs->entities[GROUP_ENEMIES], gs->debug.pause ? ST_IDLE : ST_WALK);
+	}
+
+	if (ev->toggle_terrain && gs->debug.active) {
+		gs->debug.show_terrain_collision = !gs->debug.show_terrain_collision;
 	}
 
 	tick_animation(&gs->player);
@@ -532,7 +549,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		}
 	}
 
-	if (!gs->pause) {
+	if (!gs->debug.active || !gs->debug.pause) {
 		enemy_movement(s->collision, &gs->entities[GROUP_ENEMIES]);
 	}
 
@@ -729,24 +746,27 @@ static void render(session const *s, game_state const *gs)
 	switch (gs->run) {
 	case MODE_LOGO:
 		screen.x = screen.y = 0;
-		draw_entity(s->r, &screen, &gs->logo, SDL_FALSE);
+		draw_entity(s->r, &screen, &gs->logo, 0);
 		break;
 	case MODE_INTRO:
 		screen.x = screen.y = 0;
-		draw_entity(s->r, &screen, &gs->intro, SDL_FALSE);
+		draw_entity(s->r, &screen, &gs->intro, 0);
 		break;
 	case MODE_GAME:
 		draw_background(s->r, s->background, &screen);
+		if (gs->debug.active && gs->debug.show_terrain_collision) {
+			draw_background(s->r, gs->debug.terrain_collision, &screen);
+		}
 		int g;
 		for (g = 0; g < NGROUPS; g++) {
 			for (i = 0; i < gs->entities[g].n; i++) {
 				if (gs->entities[g].e[i].active) {
-					draw_entity(s->r, &screen, &gs->entities[g].e[i], gs->debug);
+					draw_entity(s->r, &screen, &gs->entities[g].e[i], &gs->debug);
 				}
 			}
 		}
 
-		draw_player(s->r, &screen, &gs->player, gs->debug);
+		draw_player(s->r, &screen, &gs->player, &gs->debug);
 
 		if (gs->msg) {
 			draw_message(s->r, s->msg.tex, gs->msg, &s->msg.box, &s->msg.line);
@@ -767,8 +787,18 @@ static void clear_event(game_event *ev)
 	ev->exit = SDL_FALSE;
 	ev->toggle_debug = SDL_FALSE;
 	ev->toggle_pause = SDL_FALSE;
+	ev->toggle_terrain = SDL_FALSE;
 	ev->keyboard = SDL_FALSE;
 	ev->reset =SDL_FALSE;
+}
+
+static void clear_debug(debug_state *d)
+{
+	d->active = SDL_FALSE;
+	d->pause = SDL_FALSE;
+	d->frames = SDL_TRUE;
+	d->hitboxes = SDL_TRUE;
+	d->show_terrain_collision = SDL_FALSE;
 }
 
 /* collisions */
@@ -860,7 +890,7 @@ static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *sc
 	SDL_RenderCopy(r, bg, screen, 0);
 }
 
-static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, SDL_bool debug)
+static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, debug_state const *debug)
 {
 	int frame = p->anim.frame;
 	SDL_Rect dim = p->rule->start_dim;
@@ -869,9 +899,11 @@ static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 
 	SDL_bool flip = p->dir == DIR_RIGHT;
 	SDL_RenderCopyEx(r, p->tex, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
-	if (debug) {
-		SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
-		SDL_RenderDrawRect(r, &dst);
+	if (debug && debug->active) {
+		if (debug->frames) {
+			SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
+			SDL_RenderDrawRect(r, &dst);
+		}
 	}
 }
 
@@ -892,36 +924,31 @@ static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_
 	}
 }
 
-static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, SDL_bool debug)
+static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug)
 {
 	entity_rule const *rl = s->rule;
 	int w = rl->start_dim.w;
 	int h = rl->start_dim.h;
 	SDL_Rect src = { x: s->anim.frame * s->spawn.w, y: 0, w: w, h: h };
 	SDL_Rect dst = { x: s->pos.x - scr->x, y: s->pos.y - scr->y, w: w, h: h };
-	/*
-	printf("%d %d %d\n", s->anim.frame, s->pos.w, src.x);
-	printf("src %d %d %d %d\n", src.x, src.y, src.w, src.h);
-	printf("dst %d %d %d %d\n", dst.x, dst.y, dst.w, dst.h);
-	printf("%d %d\n", s->pos.x, scr->x);
-	*/
 
 	SDL_bool flip = s->dir == DIR_RIGHT;
 	SDL_RenderCopyEx(r, s->tex, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
-	if (debug) {
+	if (debug && debug->active) {
 
-		// draw frame
-		SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
-		SDL_RenderDrawRect(r, &dst);
+		if (debug->frames) {
+			SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
+			SDL_RenderDrawRect(r, &dst);
+		}
 
-
-		// draw hitbox
-		SDL_Rect box;
-		entity_hitbox(s, &box);
-		box.x -= scr->x;
-		box.y -= scr->y;
-		SDL_SetRenderDrawColor(r, 23, 225, 38, 255);
-		SDL_RenderDrawRect(r, &box);
+		if (debug->hitboxes) {
+			SDL_Rect box;
+			entity_hitbox(s, &box);
+			box.x -= scr->x;
+			box.y -= scr->y;
+			SDL_SetRenderDrawColor(r, 23, 225, 38, 255);
+			SDL_RenderDrawRect(r, &box);
+		}
 	}
 }
 
