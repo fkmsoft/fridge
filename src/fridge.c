@@ -118,6 +118,7 @@ typedef struct {
 	unsigned msg_timeout;
 	enum mode run;
 	SDL_bool debug;
+	SDL_bool pause;
 } game_state;
 
 typedef struct {
@@ -128,6 +129,7 @@ typedef struct {
 
 typedef struct {
 	entity_event player;
+	SDL_bool toggle_pause;
 	SDL_bool toggle_debug;
 	SDL_bool exit;
 	SDL_bool keyboard;
@@ -145,6 +147,8 @@ static void process_event(SDL_Event const *ev, game_event *r);
 static void process_keystate(unsigned char const *ks, game_event *r);
 static void update_gamestate(session const *s, game_state *gs, game_event const *ev);
 static void tick_animation(entity_state *as);
+static void set_group_state(group *g, enum state st);
+static void enemy_movement(SDL_Surface const *terrain, group *nmi);
 static void load_state(entity_state *es);
 static void render(session const *s, game_state const *gs);
 static void clear_event(game_event *ev);
@@ -355,7 +359,10 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	 * e_texs buffer */
 	free(e_texs);
 
+	/* init game_state flags */
 	gs->run = gs->logo.active ? MODE_LOGO : gs->intro.active ? MODE_INTRO : MODE_GAME;
+	gs->debug = SDL_FALSE;
+	gs->pause = SDL_FALSE;
 
 	json_decref(game);
 
@@ -457,6 +464,9 @@ static void process_event(SDL_Event const *ev, game_event *r)
 		case SDLK_q:
 			r->exit = SDL_TRUE;
 			break;
+		case SDLK_p:
+			r->toggle_pause = SDL_TRUE;
+			break;
 		case SDLK_SPACE:
 			r->player.move_jump = SDL_TRUE;
 			break;
@@ -506,6 +516,11 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		gs->debug = !gs->debug;
 	}
 
+	if (gs->debug && ev->toggle_pause) {
+		gs->pause = !gs->pause;
+		set_group_state(&gs->entities[GROUP_ENEMIES], gs->pause ? ST_IDLE : ST_WALK);
+	}
+
 	tick_animation(&gs->player);
 	int i;
 	enum group g;
@@ -517,16 +532,8 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		}
 	}
 
-	group *nmi = &gs->entities[GROUP_ENEMIES];
-	for (i = 0; i < nmi->n; i++) {
-		int old_x = nmi->e[i].pos.x;
-		nmi->e[i].pos.x += nmi->e[i].dir * nmi->e[i].rule->walk_dist;
-		SDL_Rect hb;
-		entity_hitbox(&nmi->e[i], &hb);
-		if (collides_with_terrain(&hb, s->collision)) {
-			nmi->e[i].pos.x = old_x;
-			nmi->e[i].dir *= -1;
-		}
+	if (!gs->pause) {
+		enemy_movement(s->collision, &gs->entities[GROUP_ENEMIES]);
 	}
 
 	entity_rule const *pr = gs->player.rule;
@@ -676,6 +683,30 @@ static void tick_animation(entity_state *es)
 	}
 }
 
+static void set_group_state(group *g, enum state st)
+{
+	int i;
+	for (i = 0; i < g->n; i++) {
+		g->e[i].st = st;
+		load_state(&g->e[i]);
+	}
+}
+
+static void enemy_movement(SDL_Surface const *terrain, group *nmi)
+{
+	int i;
+	for (i = 0; i < nmi->n; i++) {
+		int old_x = nmi->e[i].pos.x;
+		nmi->e[i].pos.x += nmi->e[i].dir * nmi->e[i].rule->walk_dist;
+		SDL_Rect hb;
+		entity_hitbox(&nmi->e[i], &hb);
+		if (collides_with_terrain(&hb, terrain)) {
+			nmi->e[i].pos.x = old_x;
+			nmi->e[i].dir *= -1;
+		}
+	}
+}
+
 static void load_state(entity_state *es)
 {
 	animation_rule ar = es->rule->anim[es->st];
@@ -735,6 +766,7 @@ static void clear_event(game_event *ev)
 	ev->player.move_jump = SDL_FALSE;
 	ev->exit = SDL_FALSE;
 	ev->toggle_debug = SDL_FALSE;
+	ev->toggle_pause = SDL_FALSE;
 	ev->keyboard = SDL_FALSE;
 	ev->reset =SDL_FALSE;
 }
