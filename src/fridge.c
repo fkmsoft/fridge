@@ -115,6 +115,7 @@ typedef struct {
 	SDL_bool pause;
 	SDL_bool show_terrain_collision;
 	SDL_Texture *terrain_collision;
+	SDL_bool message_positions;
 } debug_state;
 
 typedef struct {
@@ -183,6 +184,7 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset);
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
+static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect const *screen);
 static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, debug_state const *debug);
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line);
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
@@ -769,6 +771,10 @@ static void render(session const *s, game_state const *gs)
 			}
 		}
 
+		if (gs->debug.active && gs->debug.message_positions) {
+			draw_message_boxes(s->r, &s->msg, &screen);
+		}
+
 		draw_player(s->r, &screen, &gs->player, &gs->debug);
 
 		if (gs->msg) {
@@ -802,6 +808,7 @@ static void clear_debug(debug_state *d)
 	d->frames = SDL_TRUE;
 	d->hitboxes = SDL_TRUE;
 	d->show_terrain_collision = SDL_FALSE;
+	d->message_positions = SDL_TRUE;
 }
 
 /* collisions */
@@ -856,20 +863,25 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 
 static void player_hitbox(entity_state const *p, pos const *screen, SDL_Rect *r)
 {
-	// TODO
-	//SDL_Rect dst = { x: (scr->w - dim.w)/2, y: (scr->h - dim.h)/2, w: dim.w, h: dim.h };
-	r->x = p->pos.x + (screen->x - p->spawn.w)/2 + p->hitbox.x;
-	r->y = p->pos.y + (screen->y - p->spawn.h)/2 + p->hitbox.y;
-	r->w = p->hitbox.w;
-	r->h = p->hitbox.h;
+	entity_hitbox(p, r);
+	r->x += (screen->x - p->spawn.w)/2;
+	r->y += (screen->y - p->spawn.h)/2;
 }
 
 static void entity_hitbox(entity_state const *s, SDL_Rect *box)
 {
-	*box = (SDL_Rect) { x: s->pos.x + s->hitbox.x,
+	*box = (SDL_Rect) { x: s->pos.x,
 			    y: s->pos.y + s->hitbox.y,
 			    w: s->hitbox.w,
 			    h: s->hitbox.h };
+	switch (s->dir) {
+	case DIR_LEFT:
+		box->x += s->hitbox.x;
+		break;
+	case DIR_RIGHT:
+		box->x += s->spawn.w - s->hitbox.x - s->hitbox.w;
+		break;
+	}
 }
 
 /* low level interactions */
@@ -892,6 +904,35 @@ static SDL_Texture *load_texture(SDL_Renderer *r, char const *file)
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen)
 {
 	SDL_RenderCopy(r, bg, screen, 0);
+}
+
+static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect const *screen)
+{
+	int i;
+	for (i = 0; i < msgs->n; i++) {
+		SDL_bool fill = SDL_TRUE;
+		switch(msgs->msgs[i].when) {
+		case MSG_NEVER:
+			fill = SDL_FALSE;
+			/* fallthrough */
+		case MSG_ONCE:
+			SDL_SetRenderDrawColor(r, 0, 100, 0, 255);
+			break;
+		case MSG_ALWAYS:
+			SDL_SetRenderDrawColor(r, 124, 252, 0, 255);
+			break;
+		}
+
+		int const A = 4;
+		SDL_Rect b = { x: msgs->msgs[i].pos.x - A / 2 - screen->x,
+		               y: msgs->msgs[i].pos.y - A / 2 - screen->y,
+			       w: A, h: A };
+		if (fill) {
+			SDL_RenderFillRect(r, &b);
+		} else {
+			SDL_RenderDrawRect(r, &b);
+		}
+	}
 }
 
 static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, debug_state const *debug)
