@@ -21,6 +21,7 @@
 #define streq(s1, s2) !strcmp(s1, s2)
 
 enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
+enum hit { HIT_NONE = 0, HIT_TOP = 1, HIT_LEFT = 1 << 1, HIT_RIGHT = 1 << 2, HIT_BOT = 1 << 3 };
 enum mode { MODE_LOGO, MODE_INTRO, MODE_GAME, MODE_EXIT };
 
 enum msg_frequency { MSG_NEVER, MSG_ONCE, MSG_ALWAYS };
@@ -137,6 +138,13 @@ typedef struct {
 } entity_event;
 
 typedef struct {
+	int walked;
+	int jumped;
+	int fallen;
+	SDL_bool turned;
+} move_log;
+
+typedef struct {
 	entity_event player;
 	SDL_bool toggle_pause;
 	SDL_bool toggle_debug;
@@ -170,7 +178,7 @@ static void clear_event(game_event *ev);
 static void clear_debug(debug_state *d);
 
 /* collisions */
-static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
+static enum hit collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool in_rect(pos const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
@@ -195,6 +203,7 @@ static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
 static unsigned getpixel(SDL_Surface const *s, int x, int y);
 static char const *set_path(char const *fmt, ...);
+static void print_hit(enum hit h);
 
 int main(void) {
 	SDL_bool ok;
@@ -550,6 +559,9 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 	if (ev->toggle_debug) {
 		gs->debug.active = !gs->debug.active;
+		if (!gs->debug.active) {
+			set_group_state(&gs->entities[GROUP_ENEMIES], ST_WALK);
+		}
 	}
 
 	if (ev->reload_conf && gs->debug.active) {
@@ -582,6 +594,8 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		gs->debug.show_terrain_collision = !gs->debug.show_terrain_collision;
 	}
 
+	move_log mlog = { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE };
+
 	tick_animation(&gs->player);
 	int i;
 	enum group g;
@@ -602,11 +616,13 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 	SDL_Rect r;
 	if (ev->player.move_left || ev->player.move_right) {
 
+		enum dir old_dir = gs->player.dir;
 		gs->player.dir = ev->player.move_left ? DIR_LEFT : DIR_RIGHT;
-		player_walk(&gs->player, s->collision, &s->screen);
+		mlog.turned = old_dir != gs->player.dir;
+		mlog.walked = player_walk(&gs->player, s->collision, &s->screen) * gs->player.dir;
 	}
 
-	if (ev->player.move_jump && gs->player.st != ST_FALL) {
+	if (ev->player.move_jump && gs->player.st != ST_FALL && gs->player.st != ST_JUMP) {
 		gs->player.jump_timeout = pr->jump_time;
 	}
 
@@ -616,9 +632,16 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
 		for (f = pr->jump_dist; f > 0; f--) {
-			if (collides_with_terrain(&r, s->collision)) { break; }
+			enum hit h = collides_with_terrain(&r, s->collision);
+			if (h != HIT_NONE) {
+				printf("jump ");
+				print_hit(h);
+				gs->player.jump_timeout = 0;
+				break;
+			}
 			r.y -= 1;
 			gs->player.pos.y -= 1;
+			mlog.jumped += 1;
 		}
 	} else {
 		player_hitbox(&gs->player, &s->screen, &r);
@@ -627,20 +650,20 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 			if (stands_on_terrain(&r, s->collision)) { break; }
 			r.y += 1;
 			gs->player.pos.y += 1;
+			mlog.fallen += 1;
 		}
 	}
 
 	enum state old_state = gs->player.st;
-	player_hitbox(&gs->player, &s->screen, &r);
-	if (gs->player.jump_timeout > 0) {
-
-		gs->player.st = ST_JUMP;
-
-	} else if (!stands_on_terrain(&r, s->collision)) {
+	if (mlog.fallen != 0) {
 
 		gs->player.st = ST_FALL;
 
-	} else if (ev->player.move_left || ev->player.move_right) {
+	} else if (mlog.jumped != 0) {
+
+		gs->player.st = ST_JUMP;
+
+	} else if (mlog.walked != 0) {
 
 		gs->player.st = ST_WALK;
 	} else {
@@ -746,11 +769,11 @@ static int entity_walk(entity_state *e, SDL_Surface const *terrain)
 	entity_hitbox(e, &r);
 
 	int dst = 0;
-	if (collides_with_terrain(&r, terrain)) {
+	if (collides_with_terrain(&r, terrain) != HIT_NONE) {
 		e->pos.x = old_x;
 		entity_hitbox(e, &r);
 
-		while (!collides_with_terrain(&r, terrain)) {
+		while (!collides_with_terrain(&r, terrain) != HIT_NONE) {
 			e->pos.x += e->dir;
 			r.x += e->dir;
 			dst += 1;
@@ -769,13 +792,16 @@ static int player_walk(entity_state *p, SDL_Surface const *terrain, pos const *s
 
 	SDL_Rect r;
 	player_hitbox(p, screen, &r);
+	enum hit h = collides_with_terrain(&r, terrain);
 
 	int dst = 0;
-	if (collides_with_terrain(&r, terrain)) {
+	if (h != HIT_NONE) {
+		printf("walk ");
+		print_hit(h);
 		p->pos.x = old_x;
 		player_hitbox(p, screen, &r);
 
-		while (!collides_with_terrain(&r, terrain)) {
+		while (!collides_with_terrain(&r, terrain) != HIT_NONE) {
 			p->pos.x += p->dir;
 			r.x += p->dir;
 			dst += 1;
@@ -891,16 +917,20 @@ static void clear_debug(debug_state *d)
 }
 
 /* collisions */
-static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t)
+static enum hit collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t)
 {
 	int x = r->x;
 	int y = r->y;
 	int h = r->h - 1;
 
-	return getpixel(t, x,        y    ) == 0 ||
-	       getpixel(t, x + r->w, y    ) == 0 ||
-	       getpixel(t, x,        y + h) == 0 ||
-	       getpixel(t, x + r->w, y + h) == 0;
+	enum hit a = HIT_NONE;
+
+	a |= getpixel(t, x,        y    ) == 0 ? (HIT_TOP | HIT_LEFT ) : 0;
+	a |= getpixel(t, x + r->w, y    ) == 0 ? (HIT_TOP | HIT_RIGHT) : 0;
+	a |= getpixel(t, x,        y + h) == 0 ? (HIT_BOT | HIT_LEFT ) : 0;
+	a |= getpixel(t, x + r->w, y + h) == 0 ? (HIT_BOT | HIT_RIGHT) : 0;
+
+	return a;
 }
 
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t)
@@ -1342,4 +1372,14 @@ static char const *set_path(char const *fmt, ...)
 	va_end(ap);
 
 	return buf;
+}
+
+static void print_hit(enum hit h)
+{
+	printf("hit:");
+	if (h & HIT_LEFT) { printf(" left"); }
+	if (h & HIT_RIGHT) { printf(" right"); }
+	if (h & HIT_TOP) { printf(" top"); }
+	if (h & HIT_BOT) { printf(" bot"); }
+	puts("");
 }
