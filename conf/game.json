@@ -17,7 +17,7 @@
                             "walk_dist": 5 },
                 "ghost":  { "resource": "ghost.json",
                             "walk_dist": 2 },
-                "player": { "resource": "player.json",
+                "player": { "resource": "player2.json",
                             "walk_dist": 5,
                             "jump_dist": 14,
                             "jump_time": 9,
