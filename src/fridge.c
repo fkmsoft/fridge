@@ -141,6 +141,7 @@ typedef struct {
 	SDL_bool toggle_pause;
 	SDL_bool toggle_debug;
 	SDL_bool toggle_terrain;
+	SDL_bool reload_conf;
 	SDL_bool exit;
 	SDL_bool keyboard;
 	SDL_bool reset;
@@ -148,6 +149,7 @@ typedef struct {
 
 /* high level init */
 static SDL_bool init_game(session *s, game_state *g, char const *root);
+static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const *root);
 static void load_intro(entity_state *intro, session const *s, json_t *o, char const *k, entity_rule const *e_rules, SDL_Texture **e_texs);
 void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st);
 static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st);
@@ -161,6 +163,7 @@ static void set_group_state(group *g, enum state st);
 static void enemy_movement(SDL_Surface const *terrain, group *nmi);
 static void load_state(entity_state *es);
 static void render(session const *s, game_state const *gs);
+static void clear_game(game_state *gs);
 static void clear_event(game_event *ev);
 static void clear_debug(debug_state *d);
 
@@ -246,7 +249,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 {
 	SDL_Window *window;
 	int i;
-	json_t *game, *player, *spawn, *entities, *fnt;
+	json_t *game, *res;
 
 	char const *path;
 	path = set_path("%s/%s/%s", root, CONF_DIR, GAME_CONF);
@@ -263,18 +266,9 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
-	fnt = json_object_get(game, "font");
-	path = set_path("%s/%s/%s", root, ASSET_DIR, json_string_value(json_object_get(fnt, "resource")));
-	int fnt_siz = json_integer_value(json_object_get(fnt, "size"));
-	TTF_Font *font = TTF_OpenFont(path, fnt_siz);
-	if (!font) {
-		fprintf(stderr, "error: could not load font %s: %s\n", path, TTF_GetError());
-		return SDL_FALSE;
-	}
-
-	spawn = json_object_get(game, "resolution");
-	s->screen.x = json_integer_value(json_array_get(spawn, 0));
-	s->screen.y = json_integer_value(json_array_get(spawn, 1));
+	res = json_object_get(game, "resolution");
+	s->screen.x = json_integer_value(json_array_get(res, 0));
+	s->screen.y = json_integer_value(json_array_get(res, 1));
 
 	i = SDL_Init(SDL_INIT_VIDEO);
 	if (i < 0) {
@@ -298,11 +292,34 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	s->r = SDL_CreateRenderer(window, -1, 0);
 
+	SDL_bool ok = load_config(s, gs, game, root);
+	if (!ok) { return SDL_FALSE; }
+
+	gs->run = gs->logo.active ? MODE_LOGO : gs->intro.active ? MODE_INTRO : MODE_GAME;
+	clear_game(gs);
+
+	return SDL_TRUE;
+}
+
+static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const *root)
+{
+	json_t *player, *spawn, *entities, *fnt;
+	char const *path;
+
+	/* load config */
+	fnt = json_object_get(game, "font");
+	path = set_path("%s/%s/%s", root, ASSET_DIR, json_string_value(json_object_get(fnt, "resource")));
+	int fnt_siz = json_integer_value(json_object_get(fnt, "size"));
+	TTF_Font *font = TTF_OpenFont(path, fnt_siz);
+	if (!font) {
+		fprintf(stderr, "error: could not load font %s: %s\n", path, TTF_GetError());
+		return SDL_FALSE;
+	}
+
 	SDL_bool ok;
 	ok = load_finish(s, game, font, fnt_siz);
 	if (!ok) { return SDL_FALSE; }
 
-	gs->msg = 0;
 	ok = load_messages(s, game, font, fnt_siz, root);
 	if (!ok) { return SDL_FALSE; }
 
@@ -325,7 +342,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	e_texs = malloc(sizeof(SDL_Texture *) * k);
 	e_rules = malloc(sizeof(entity_rule) * k);
 
-	i = 0;
+	int i = 0;
 	char const *name;
 	json_t *o;
 	json_object_foreach(entities, name, o) {
@@ -343,8 +360,6 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	init_group(&gs->entities[GROUP_OBJECTS], game, "objects", e_texs, e_rules, ST_IDLE);
 	init_group(&gs->entities[GROUP_ENEMIES], game, "enemies", e_texs, e_rules, ST_WALK);
-
-	gs->need_to_collect = gs->entities[GROUP_OBJECTS].n;
 
 	int pi;
 	player = json_object_get(entities, "player");
@@ -374,8 +389,6 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	free(e_texs);
 
 	/* init game_state flags */
-	gs->run = gs->logo.active ? MODE_LOGO : gs->intro.active ? MODE_INTRO : MODE_GAME;
-	clear_debug(&gs->debug);
 	gs->debug.terrain_collision = SDL_CreateTextureFromSurface(s->r, s->collision);
 	SDL_SetTextureAlphaMod(gs->debug.terrain_collision, 100);
 
@@ -482,6 +495,9 @@ static void process_event(SDL_Event const *ev, game_event *r)
 		case SDLK_b:
 			r->toggle_terrain = SDL_TRUE;
 			break;
+		case SDLK_u:
+			r->reload_conf = SDL_TRUE;
+			break;
 		case SDLK_p:
 			r->toggle_pause = SDL_TRUE;
 			break;
@@ -532,6 +548,27 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 
 	if (ev->toggle_debug) {
 		gs->debug.active = !gs->debug.active;
+	}
+
+	if (ev->reload_conf && gs->debug.active) {
+		char const *r, *p;
+		r = getenv(ROOTVAR);
+		if (r && *r) {
+			p = set_path("%s/%s/%s", r, CONF_DIR, GAME_CONF);
+			json_t *g;
+			json_error_t e;
+			g = json_load_file(p, 0, &e);
+			if (*e.text != 0) {
+				fprintf(stderr, "error: in %s:%d: %s\n", p, e.line, e.text);
+			} else {
+				pos ps = gs->player.pos;
+				enum dir dr = gs->player.dir;
+				fprintf(stderr, "info: re-loading config\n");
+				load_config(s, gs, g, r);
+				gs->player.pos = ps;
+				gs->player.dir = dr;
+			}
+		}
 	}
 
 	if (ev->toggle_pause && gs->debug.active) {
@@ -788,6 +825,14 @@ static void render(session const *s, game_state const *gs)
 	SDL_RenderPresent(s->r);
 }
 
+static void clear_game(game_state *gs)
+{
+	gs->msg = 0;
+
+	gs->need_to_collect = gs->entities[GROUP_OBJECTS].n;
+	clear_debug(&gs->debug);
+}
+
 static void clear_event(game_event *ev)
 {
 	ev->player.move_left = SDL_FALSE;
@@ -797,6 +842,7 @@ static void clear_event(game_event *ev)
 	ev->toggle_debug = SDL_FALSE;
 	ev->toggle_pause = SDL_FALSE;
 	ev->toggle_terrain = SDL_FALSE;
+	ev->reload_conf = SDL_FALSE;
 	ev->keyboard = SDL_FALSE;
 	ev->reset =SDL_FALSE;
 }
@@ -919,7 +965,7 @@ static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect c
 			SDL_SetRenderDrawColor(r, 0, 100, 0, 255);
 			break;
 		case MSG_ALWAYS:
-			SDL_SetRenderDrawColor(r, 124, 252, 0, 255);
+			SDL_SetRenderDrawColor(r, 23, 225, 38, 255);
 			break;
 		}
 
