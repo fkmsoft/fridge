@@ -168,7 +168,7 @@ static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool in_rect(pos const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
-static void player_rect(pos const *pos, SDL_Rect *r);
+static void player_hitbox(entity_state const *p, pos const *screen, SDL_Rect *r);
 static void entity_hitbox(entity_state const *s, SDL_Rect *box);
 
 /* low level interactions */
@@ -360,6 +360,8 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	gs->player.spawn.x = json_integer_value(json_array_get(spawn, 0));
 	gs->player.spawn.y = json_integer_value(json_array_get(spawn, 1));
+	gs->player.spawn.w = 32;
+	gs->player.spawn.h = 64;
 	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi], ST_IDLE);
 
 	load_intro(&gs->logo, s, entities, "logo", e_rules, e_texs);
@@ -563,11 +565,11 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		int old_x = gs->player.pos.x;
 		gs->player.pos.x += gs->player.dir * pr->walk_dist;
 
-		player_rect(&gs->player.pos, &r);
+		player_hitbox(&gs->player, &s->screen, &r);
 
 		if (collides_with_terrain(&r, s->collision)) {
 			gs->player.pos.x = old_x;
-			player_rect(&gs->player.pos, &r);
+			player_hitbox(&gs->player, &s->screen, &r);
 			/*
 			do {
 				gs->player_x += gs->player.dir;
@@ -586,13 +588,13 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		gs->player.jump_timeout -= 1;
 		gs->player.pos.y -= pr->jump_dist;
 
-		player_rect(&gs->player.pos, &r);
+		player_hitbox(&gs->player, &s->screen, &r);
 		if (collides_with_terrain(&r, s->collision)) {
 			gs->player.pos.y = old_y;
 			gs->player.jump_timeout = 0;
 		}
 	} else {
-		player_rect(&gs->player.pos, &r);
+		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
 		for (f = pr->fall_dist; !stands_on_terrain(&r, s->collision) && f > 0; f--) {
 			r.y += 1;
@@ -601,7 +603,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	}
 
 	enum state old_state = gs->player.st;
-	player_rect(&gs->player.pos, &r);
+	player_hitbox(&gs->player, &s->screen, &r);
 	if (gs->player.jump_timeout > 0) {
 
 		gs->player.st = ST_JUMP;
@@ -631,7 +633,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	} else {
 		gs->msg = 0;
 	}
-	player_rect(&gs->player.pos, &r);
+	player_hitbox(&gs->player, &s->screen, &r);
 	for (i = 0; i < s->msg.n; i++) {
 		if (s->msg.msgs[i].when == MSG_NEVER) {
 			continue;
@@ -673,7 +675,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		}
 	}
 
-	player_rect(&gs->player.pos, &r);
+	player_hitbox(&gs->player, &s->screen, &r);
 	if (in_rect(&s->finish.pos,  &r)) {
 		if (gs->need_to_collect == 0) {
 			gs->msg = &s->finish.win;
@@ -852,13 +854,14 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 }
 #undef between
 
-static void player_rect(pos const *pos, SDL_Rect *r)
+static void player_hitbox(entity_state const *p, pos const *screen, SDL_Rect *r)
 {
 	// TODO
-	r->x = pos->x + 400 - 9;
-	r->y = pos->y + 300 - 25;
-	r->w = /*pos->w*/ 18;
-	r->h = /*pos->h*/ 55;
+	//SDL_Rect dst = { x: (scr->w - dim.w)/2, y: (scr->h - dim.h)/2, w: dim.w, h: dim.h };
+	r->x = p->pos.x + (screen->x - p->spawn.w)/2 + p->hitbox.x;
+	r->y = p->pos.y + (screen->y - p->spawn.h)/2 + p->hitbox.y;
+	r->w = p->hitbox.w;
+	r->h = p->hitbox.h;
 }
 
 static void entity_hitbox(entity_state const *s, SDL_Rect *box)
@@ -904,6 +907,16 @@ static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 		if (debug->frames) {
 			SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
 			SDL_RenderDrawRect(r, &dst);
+		}
+
+		if (debug->hitboxes) {
+			SDL_Rect box;
+			pos screen = { x: scr->w, y: scr->h };
+			player_hitbox(p, &screen, &box);
+			box.x -= scr->x;
+			box.y -= scr->y;
+			SDL_SetRenderDrawColor(r, 23, 225, 38, 255);
+			SDL_RenderDrawRect(r, &box);
 		}
 	}
 }
