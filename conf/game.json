@@ -7,7 +7,7 @@
   "finish": { "pos":  [449, 1246],
               "win":  ["I made it!", "Yay!"],
               "loss": ["I need to collect", "more stuff..."]},
-  "font": { "resource": "toonish.ttf", "size": 38 },
+  "font": { "resource": "04b.ttf", "size": 28 },
   "entities": { "disc":   { "resource": "disc.json"   },
                 "burger": { "resource": "burger.json" },
                 "pizza":  { "resource": "pizza.json"  },
