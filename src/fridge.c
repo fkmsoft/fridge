@@ -80,6 +80,8 @@ typedef struct {
 	int jump_dist;
 	int jump_time;
 	int fall_dist;
+	double a_wide;
+	double a_high;
 	animation_rule anim[NSTATES];
 } entity_rule;
 
@@ -89,6 +91,8 @@ typedef struct {
 	int remaining;
 } animation_state;
 
+enum jump_type { JUMP_WIDE, JUMP_HIGH };
+
 typedef struct {
 	SDL_bool active;
 	pos pos;
@@ -97,6 +101,7 @@ typedef struct {
 	enum dir dir;
 	enum state st;
 	int jump_timeout;
+	enum jump_type jump_type;
 	int fall_time;
 	animation_state anim;
 	entity_rule const *rule;
@@ -189,6 +194,7 @@ static void entity_hitbox(entity_state const *s, SDL_Rect *box);
 /* low level interactions */
 static char const *get_asset(json_t *a, char const *k);
 static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r);
+static SDL_bool get_float_field(json_t *o, char const *n, char const *s, double *r);
 static SDL_bool load_finish(session *s, json_t *game, TTF_Font *font, int fontsize);
 static SDL_bool load_messages(session *s, json_t *game, TTF_Font *font, int fontsize, char const *root);
 static SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
@@ -626,6 +632,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 	if (ev->player.move_jump && gs->player.st != ST_FALL && gs->player.st != ST_JUMP) {
 		gs->player.jump_timeout = pr->jump_time;
+		gs->player.jump_type = (ev->player.move_left || ev->player.move_right) ? JUMP_WIDE : JUMP_HIGH;
 	}
 
 	if (gs->player.jump_timeout > 0) {
@@ -633,7 +640,9 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
-		for (f = pr->jump_dist + gs->player.jump_timeout; f > 0; f--) {
+		double a = (gs->player.jump_type == JUMP_WIDE) ?
+				pr->a_wide : pr->a_high;
+		for (f = pr->jump_dist + gs->player.jump_timeout * a; f > 0; f--) {
 			enum hit h = collides_with_terrain(&r, s->collision);
 			if (h != HIT_NONE) {
 				printf("jump ");
@@ -1148,6 +1157,21 @@ static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r)
 	return SDL_TRUE;
 }
 
+static SDL_bool get_float_field(json_t *o, char const *n, char const *s, double *r)
+{
+	json_t *var;
+
+	var = json_object_get(o, s);
+	if (!var) {
+		fprintf(stderr, "warning: no %s for %s\n", s, n);
+		*r = 0;
+		return SDL_FALSE;
+	}
+	*r = json_real_value(var);
+
+	return SDL_TRUE;
+}
+
 static SDL_bool load_finish(session *s, json_t *game, TTF_Font *font, int fontsize)
 {
 	finish *f = &s->finish;
@@ -1254,10 +1278,12 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	char const *path;
 	path = set_path("%s/%s/%s", root, CONF_DIR, ps);
 
-	get_int_field(src, n, "walk_dist", &er->walk_dist);
-	get_int_field(src, n, "jump_dist", &er->jump_dist);
-	get_int_field(src, n, "jump_time", &er->jump_time);
-	get_int_field(src, n, "fall_dist", &er->fall_dist);
+	get_int_field(src, n, "walk-dist", &er->walk_dist);
+	get_int_field(src, n, "jump-dist", &er->jump_dist);
+	get_int_field(src, n, "jump-time", &er->jump_time);
+	get_int_field(src, n, "fall-dist", &er->fall_dist);
+	get_float_field(src, n, "wide-jump-factor", &er->a_wide);
+	get_float_field(src, n, "high-jump-factor", &er->a_high);
 
 	json_error_t e;
 	o = json_load_file(path, 0, &e);
