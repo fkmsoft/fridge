@@ -8,7 +8,7 @@
 #include <SDL_ttf.h>
 #include <SDL_image.h>
 
-#define TICK 80
+#define TICK 40
 #define MAX_PATH 500
 
 #define MSG_LINES 2
@@ -90,7 +90,8 @@ typedef struct {
 
 typedef struct {
 	SDL_bool active;
-	SDL_Rect pos;
+	pos pos;
+	SDL_Rect hitbox;
 	SDL_Rect spawn;
 	enum dir dir;
 	enum state st;
@@ -116,6 +117,7 @@ typedef struct {
 	message const *msg;
 	unsigned msg_timeout;
 	enum mode run;
+	SDL_bool debug;
 } game_state;
 
 typedef struct {
@@ -126,6 +128,7 @@ typedef struct {
 
 typedef struct {
 	entity_event player;
+	SDL_bool toggle_debug;
 	SDL_bool exit;
 	SDL_bool keyboard;
 	SDL_bool reset;
@@ -151,7 +154,8 @@ static SDL_bool collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool in_rect(pos const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
-static void player_rect(SDL_Rect const *pos, SDL_Rect *r);
+static void player_rect(pos const *pos, SDL_Rect *r);
+static void entity_hitbox(entity_state const *s, SDL_Rect *box);
 
 /* low level interactions */
 static char const *get_asset(json_t *a, char const *k);
@@ -165,9 +169,9 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset);
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
-static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p);
+static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, SDL_bool debug);
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line);
-static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s);
+static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, SDL_bool debug);
 static unsigned getpixel(SDL_Surface const *s, int x, int y);
 static char const *set_path(char const *fmt, ...);
 
@@ -459,6 +463,9 @@ static void process_event(SDL_Event const *ev, game_event *r)
 		case SDLK_r:
 			r->reset = SDL_TRUE;
 			break;
+		case SDLK_d:
+			r->toggle_debug = SDL_TRUE;
+			break;
 		}
 		break;
 	}
@@ -476,7 +483,8 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 
 		tick_animation(&gs->logo );
 
-		if (gs->logo.anim.pos == gs->logo.rule->anim[ST_IDLE].len - 1) {
+		if (gs->logo.anim.pos == gs->logo.rule->anim[ST_IDLE].len - 1 ||
+		    ev->keyboard) {
 			gs->run = MODE_INTRO;
 		}
 	}
@@ -494,6 +502,10 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		return;
 	}
 
+	if (ev->toggle_debug) {
+		gs->debug = !gs->debug;
+	}
+
 	tick_animation(&gs->player);
 	int i;
 	enum group g;
@@ -509,7 +521,9 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	for (i = 0; i < nmi->n; i++) {
 		int old_x = nmi->e[i].pos.x;
 		nmi->e[i].pos.x += nmi->e[i].dir * nmi->e[i].rule->walk_dist;
-		if (collides_with_terrain(&nmi->e[i].pos, s->collision)) {
+		SDL_Rect hb;
+		entity_hitbox(&nmi->e[i], &hb);
+		if (collides_with_terrain(&hb, s->collision)) {
 			nmi->e[i].pos.x = old_x;
 			nmi->e[i].dir *= -1;
 		}
@@ -555,7 +569,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 	} else {
 		player_rect(&gs->player.pos, &r);
 		int f;
-		for (f = pr->jump_dist; !stands_on_terrain(&r, s->collision) && f > 0; f--) {
+		for (f = pr->fall_dist; !stands_on_terrain(&r, s->collision) && f > 0; f--) {
 			r.y += 1;
 			gs->player.pos.y += 1;
 		}
@@ -593,8 +607,6 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		gs->msg = 0;
 	}
 	player_rect(&gs->player.pos, &r);
-	/*printf("%d %d\n", gs->player.pos.x, gs->player.pos.y);*/
-	/*printf("%d %d\n", r.x, r.y);*/
 	for (i = 0; i < s->msg.n; i++) {
 		if (s->msg.msgs[i].when == MSG_NEVER) {
 			continue;
@@ -618,7 +630,9 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 				continue;
 			}
 
-			if (have_collision(&r, &gs->entities[g].e[i].pos)) {
+			SDL_Rect hb;
+			entity_hitbox(&gs->entities[g].e[i], &hb);
+			if (have_collision(&r, &hb)) {
 				switch (g) {
 				case GROUP_OBJECTS:
 					gs->entities[g].e[i].active = SDL_FALSE;
@@ -668,8 +682,10 @@ static void load_state(entity_state *es)
 	es->anim.pos = 0;
 	es->anim.frame = ar.frames[0];
 	es->anim.remaining = ar.duration[0];
-	es->pos.w = ar.box.w;
-	es->pos.h = ar.box.h;
+	es->hitbox.x = ar.box.x;
+	es->hitbox.y = ar.box.y;
+	es->hitbox.w = ar.box.w;
+	es->hitbox.h = ar.box.h;
 }
 
 static void render(session const *s, game_state const *gs)
@@ -682,11 +698,11 @@ static void render(session const *s, game_state const *gs)
 	switch (gs->run) {
 	case MODE_LOGO:
 		screen.x = screen.y = 0;
-		draw_entity(s->r, &screen, &gs->logo);
+		draw_entity(s->r, &screen, &gs->logo, SDL_FALSE);
 		break;
 	case MODE_INTRO:
 		screen.x = screen.y = 0;
-		draw_entity(s->r, &screen, &gs->intro);
+		draw_entity(s->r, &screen, &gs->intro, SDL_FALSE);
 		break;
 	case MODE_GAME:
 		draw_background(s->r, s->background, &screen);
@@ -694,12 +710,12 @@ static void render(session const *s, game_state const *gs)
 		for (g = 0; g < NGROUPS; g++) {
 			for (i = 0; i < gs->entities[g].n; i++) {
 				if (gs->entities[g].e[i].active) {
-					draw_entity(s->r, &screen, &gs->entities[g].e[i]);
+					draw_entity(s->r, &screen, &gs->entities[g].e[i], gs->debug);
 				}
 			}
 		}
 
-		draw_player(s->r, &screen, &gs->player);
+		draw_player(s->r, &screen, &gs->player, gs->debug);
 
 		if (gs->msg) {
 			draw_message(s->r, s->msg.tex, gs->msg, &s->msg.box, &s->msg.line);
@@ -718,6 +734,7 @@ static void clear_event(game_event *ev)
 	ev->player.move_right = SDL_FALSE;
 	ev->player.move_jump = SDL_FALSE;
 	ev->exit = SDL_FALSE;
+	ev->toggle_debug = SDL_FALSE;
 	ev->keyboard = SDL_FALSE;
 	ev->reset =SDL_FALSE;
 }
@@ -772,13 +789,21 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 }
 #undef between
 
-static void player_rect(SDL_Rect const *pos, SDL_Rect *r)
+static void player_rect(pos const *pos, SDL_Rect *r)
 {
 	// TODO
 	r->x = pos->x + 400 - 9;
 	r->y = pos->y + 300 - 25;
 	r->w = /*pos->w*/ 18;
 	r->h = /*pos->h*/ 55;
+}
+
+static void entity_hitbox(entity_state const *s, SDL_Rect *box)
+{
+	*box = (SDL_Rect) { x: s->pos.x + s->hitbox.x,
+			    y: s->pos.y + s->hitbox.y,
+			    w: s->hitbox.w,
+			    h: s->hitbox.h };
 }
 
 /* low level interactions */
@@ -803,7 +828,7 @@ static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *sc
 	SDL_RenderCopy(r, bg, screen, 0);
 }
 
-static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p)
+static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *p, SDL_bool debug)
 {
 	int frame = p->anim.frame;
 	SDL_Rect dim = p->rule->start_dim;
@@ -812,6 +837,10 @@ static void draw_player(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 
 	SDL_bool flip = p->dir == DIR_RIGHT;
 	SDL_RenderCopyEx(r, p->tex, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+	if (debug) {
+		SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
+		SDL_RenderDrawRect(r, &dst);
+	}
 }
 
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line)
@@ -831,7 +860,7 @@ static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_
 	}
 }
 
-static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s)
+static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, SDL_bool debug)
 {
 	entity_rule const *rl = s->rule;
 	int w = rl->start_dim.w;
@@ -847,6 +876,21 @@ static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 
 	SDL_bool flip = s->dir == DIR_RIGHT;
 	SDL_RenderCopyEx(r, s->tex, &src, &dst, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+	if (debug) {
+
+		// draw frame
+		SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
+		SDL_RenderDrawRect(r, &dst);
+
+
+		// draw hitbox
+		SDL_Rect box;
+		entity_hitbox(s, &box);
+		box.x -= scr->x;
+		box.y -= scr->y;
+		SDL_SetRenderDrawColor(r, 23, 225, 38, 255);
+		SDL_RenderDrawRect(r, &box);
+	}
 }
 
 static char const *get_asset(json_t *a, char const *k)
