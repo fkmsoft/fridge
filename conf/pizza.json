@@ -1,4 +1,4 @@
 { "asset": "pizza.gif",
   "frame_size": [32, 64],
   "frame_count": 2,
-  "idle": { "frames": [0, 1], "duration": [1, 4], "box": [0,  0, 32, 64] }}
+  "idle": { "frames": [0, 1], "duration": [3, 12], "box": [0,  0, 32, 64] }}
