@@ -114,6 +114,7 @@ typedef struct {
 	entity_state intro;
 	group entities[NGROUPS];
 	message const *msg;
+	unsigned msg_timeout;
 	enum mode run;
 } game_state;
 
@@ -267,7 +268,14 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
-	/*SDL_SetWindowIcon(window, temp);*/
+	path = set_path("%s/%s", root, "icon.gif");
+	SDL_Surface *ico = IMG_Load(path);
+	if (ico) {
+		puts("have icon");
+		SDL_SetWindowIcon(window, ico);
+		SDL_FreeSurface(ico);
+	}
+
 	s->r = SDL_CreateRenderer(window, -1, 0);
 
 	SDL_bool ok;
@@ -579,7 +587,11 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 		init_entity_state(&gs->player, 0, 0, ST_IDLE);
 	}
 
-	gs->msg = 0;
+	if (gs->msg_timeout > 0) {
+		gs->msg_timeout -= 1;
+	} else {
+		gs->msg = 0;
+	}
 	player_rect(&gs->player.pos, &r);
 	/*printf("%d %d\n", gs->player.pos.x, gs->player.pos.y);*/
 	/*printf("%d %d\n", r.x, r.y);*/
@@ -590,6 +602,7 @@ static void update_gamestate(session const *s, game_state *gs, game_event const 
 
 		if (in_rect(&s->msg.msgs[i].pos, &r)) {
 			gs->msg = &s->msg.msgs[i];
+			gs->msg_timeout = 12;
 			if (s->msg.msgs[i].when == MSG_ONCE) {
 				s->msg.msgs[i].when = MSG_NEVER;
 			}
