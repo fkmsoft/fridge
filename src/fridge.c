@@ -97,6 +97,7 @@ typedef struct {
 	enum dir dir;
 	enum state st;
 	int jump_timeout;
+	int fall_time;
 	animation_state anim;
 	entity_rule const *rule;
 	SDL_Texture *tex;
@@ -486,6 +487,7 @@ static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Textu
 	es->pos.x = es->spawn.x;
 	es->pos.y = es->spawn.y;
 	es->jump_timeout = 0;
+	es->fall_time = 0;
 }
 
 /* high level game */
@@ -631,7 +633,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
-		for (f = pr->jump_dist; f > 0; f--) {
+		for (f = pr->jump_dist + gs->player.jump_timeout; f > 0; f--) {
 			enum hit h = collides_with_terrain(&r, s->collision);
 			if (h != HIT_NONE) {
 				printf("jump ");
@@ -646,12 +648,16 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 	} else {
 		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
-		for (f = pr->fall_dist; f > 0; f--) {
-			if (stands_on_terrain(&r, s->collision)) { break; }
+		for (f = pr->fall_dist + gs->player.fall_time; f > 0; f--) {
+			if (stands_on_terrain(&r, s->collision)) {
+				gs->player.fall_time = 0;
+				break;
+			}
 			r.y += 1;
 			gs->player.pos.y += 1;
 			mlog.fallen += 1;
 		}
+		if (mlog.fallen != 0) { gs->player.fall_time += 1; }
 	}
 
 	enum state old_state = gs->player.st;
