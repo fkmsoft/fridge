@@ -93,7 +93,7 @@ typedef struct {
 	int remaining;
 } animation_state;
 
-enum jump_type { JUMP_WIDE, JUMP_HIGH };
+enum jump_type { JUMP_WIDE, JUMP_HIGH, JUMP_HANG };
 
 typedef struct {
 	SDL_bool active;
@@ -189,6 +189,8 @@ static void clear_debug(debug_state *d);
 
 /* collisions */
 static enum hit collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t);
+static SDL_bool hang_hit(enum hit h);
+static int kick_entity(entity_state *e, enum hit h);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t);
 static SDL_bool in_rect(pos const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
@@ -399,8 +401,6 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 
 	gs->player.spawn.x = json_integer_value(json_array_get(spawn, 0));
 	gs->player.spawn.y = json_integer_value(json_array_get(spawn, 1));
-	gs->player.spawn.w = 32;
-	gs->player.spawn.h = 64;
 	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi], ST_IDLE);
 
 	load_intro(&gs->logo, s, entities, "logo", e_rules, e_texs);
@@ -473,8 +473,6 @@ void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_t
 		json_array_foreach(o, j, spawn) {
 			a[i].spawn.x = json_integer_value(json_array_get(spawn, 0));
 			a[i].spawn.y = json_integer_value(json_array_get(spawn, 1));
-			a[i].spawn.w = 32; // TODO
-			a[i].spawn.h = 64;
 			init_entity_state(&a[i], &e_rules[ei], e_texs[ei], st);
 			i += 1;
 		}
@@ -496,6 +494,8 @@ static void init_entity_state(entity_state *es, entity_rule const *er, SDL_Textu
 	load_state(es);
 	es->pos.x = es->spawn.x;
 	es->pos.y = es->spawn.y;
+	es->spawn.w = er->start_dim.w;
+	es->spawn.h = er->start_dim.h;
 	es->jump_timeout = 0;
 	es->fall_time = 0;
 }
@@ -631,18 +631,20 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		enum dir old_dir = gs->player.dir;
 		gs->player.dir = ev->player.move_left ? DIR_LEFT : DIR_RIGHT;
 		mlog.turned = old_dir != gs->player.dir;
-		if (!(gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_HIGH)) {
+		if (gs->player.jump_timeout == 0 || gs->player.jump_type == JUMP_WIDE) {
 			mlog.walked = player_walk(&gs->player, s->collision, &s->screen, gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE ? pr->jump_dist_x : pr->walk_dist) * gs->player.dir;
 		}
 	}
 
 	if (ev->player.move_jump && gs->player.st != ST_FALL && gs->player.st != ST_JUMP) {
-		gs->player.jump_timeout = pr->jump_time;
-		gs->player.jump_type = ev->player.walk ? JUMP_WIDE : JUMP_HIGH;
+		gs->player.jump_type = gs->player.st == ST_HANG ? JUMP_HANG : ev->player.walk ? JUMP_WIDE : JUMP_HIGH;
+		gs->player.jump_timeout = gs->player.jump_type == JUMP_HANG ? 4 : pr->jump_time;
+		printf("jump %d\n", gs->player.jump_type);
 	}
 
 	if (gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE && mlog.walked == 0) {
 		gs->player.jump_timeout = 0;
+		puts("cancelled");
 	}
 	
 	player_hitbox(&gs->player, &s->screen, &r);
@@ -652,14 +654,14 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		int f;
 		double a = (gs->player.jump_type == JUMP_WIDE) ?
 				pr->a_wide : pr->a_high;
-		for (f = pr->jump_dist_y + gs->player.jump_timeout * a; f > 0; f--) {
-			enum hit h = collides_with_terrain(&r, s->collision);
-			if (gs->player.st == ST_HANG) { h = HIT_NONE; }
+		for (f = (gs->player.jump_type == JUMP_HANG ? 20 : pr->jump_dist_y) + gs->player.jump_timeout * a; f > 0; f--) {
+			enum hit h = gs->player.jump_type == JUMP_HANG ? HIT_NONE : collides_with_terrain(&r, s->collision);
 			if (h != HIT_NONE) {
 				printf("jump ");
 				print_hit(h);
 				gs->player.jump_timeout = 0;
-				mlog.hang = h & HIT_TOP && !(h & HIT_LEFT && h & HIT_RIGHT);
+				mlog.hang = hang_hit(h);
+				if (!mlog.hang) { kick_entity(&gs->player, h); }
 				break;
 			}
 			r.y -= 1;
@@ -668,6 +670,10 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		}
 	} else if (gs->player.st != ST_HANG) {
 		int f;
+		if ((gs->player.st == ST_WALK || gs->player.st == ST_IDLE) && !stands_on_terrain(&r, s->collision)) {
+			enum hit h = collides_with_terrain(&r, s->collision);
+			r.x += kick_entity(&gs->player, h);
+		}
 		for (f = pr->fall_dist + 0.3 * gs->player.fall_time; f > 0; f--) {
 			if (stands_on_terrain(&r, s->collision)) {
 				gs->player.fall_time = 0;
@@ -680,9 +686,10 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		if (mlog.fallen != 0) { gs->player.fall_time += 1; }
 	}
 
+	enum hit h = collides_with_terrain(&r, s->collision);
 	mlog.hang = mlog.hang
-			|| (gs->player.st == ST_HANG && !ev->player.walk)
-			|| (mlog.fallen > 0 && collides_with_terrain(&r, s->collision) != HIT_NONE);
+			|| (gs->player.st == ST_HANG && !ev->player.walk && !ev->player.move_jump && hang_hit(h))
+			|| (mlog.fallen > 0 && hang_hit(h));
 
 	enum state old_state = gs->player.st;
 	if (mlog.hang) {
@@ -966,6 +973,26 @@ static enum hit collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t)
 	a |= getpixel(t, x + r->w, y + h) == 0 ? (HIT_BOT | HIT_RIGHT) : 0;
 
 	return a;
+}
+
+static SDL_bool hang_hit(enum hit h)
+{
+	return h & HIT_TOP && !(h & HIT_LEFT && h & HIT_RIGHT);
+}
+
+static int kick_entity(entity_state *e, enum hit h)
+{
+	if (h & HIT_TOP) { return 0; }
+	if ((h & HIT_RIGHT && h & HIT_LEFT)) { return 0; }
+
+	// TODO
+	/*int dx = ((2 + e->hitbox.w) / 2) * (h & HIT_RIGHT ? 1 : -1);*/
+	int dx = e->hitbox.w * (h & HIT_RIGHT ? 1 : -1);
+	printf("kick %d ", dx);
+	print_hit(h);
+	e->pos.x += dx;
+
+	return dx;
 }
 
 static SDL_bool stands_on_terrain(SDL_Rect const *r, SDL_Surface const *t)
