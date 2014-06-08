@@ -571,9 +571,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 	if (ev->toggle_debug) {
 		gs->debug.active = !gs->debug.active;
-		if (!gs->debug.active) {
-			set_group_state(&gs->entities[GROUP_ENEMIES], ST_WALK);
-		}
+		set_group_state(&gs->entities[GROUP_ENEMIES], gs->debug.pause && gs->debug.active ? ST_IDLE : ST_WALK);
 	}
 
 	if (ev->reload_conf && gs->debug.active) {
@@ -657,11 +655,10 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		for (f = (gs->player.jump_type == JUMP_HANG ? 20 : pr->jump_dist_y) + gs->player.jump_timeout * a; f > 0; f--) {
 			enum hit h = gs->player.jump_type == JUMP_HANG ? HIT_NONE : collides_with_terrain(&r, s->collision);
 			if (h != HIT_NONE) {
-				printf("jump ");
+				mlog.hang = hang_hit(h);
+				printf("jump %s ", mlog.hang ? "hang" : "drop");
 				print_hit(h);
 				gs->player.jump_timeout = 0;
-				mlog.hang = hang_hit(h);
-				if (!mlog.hang) { kick_entity(&gs->player, h); }
 				break;
 			}
 			r.y -= 1;
@@ -670,7 +667,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		}
 	} else if (gs->player.st != ST_HANG) {
 		int f;
-		if ((gs->player.st == ST_WALK || gs->player.st == ST_IDLE) && !stands_on_terrain(&r, s->collision)) {
+		if (gs->player.st != ST_FALL && gs->player.st != ST_JUMP && !stands_on_terrain(&r, s->collision)) {
 			enum hit h = collides_with_terrain(&r, s->collision);
 			r.x += kick_entity(&gs->player, h);
 		}
@@ -977,18 +974,16 @@ static enum hit collides_with_terrain(SDL_Rect const *r, SDL_Surface const *t)
 
 static SDL_bool hang_hit(enum hit h)
 {
-	return h & HIT_TOP && !(h & HIT_LEFT && h & HIT_RIGHT);
+	return !(h & HIT_BOT) && h & HIT_TOP && !(h & HIT_LEFT && h & HIT_RIGHT);
 }
 
 static int kick_entity(entity_state *e, enum hit h)
 {
-	if (h & HIT_TOP) { return 0; }
+	if (h == HIT_NONE || h & HIT_TOP) { return 0; }
 	if ((h & HIT_RIGHT && h & HIT_LEFT)) { return 0; }
 
-	// TODO
-	/*int dx = ((2 + e->hitbox.w) / 2) * (h & HIT_RIGHT ? 1 : -1);*/
-	int dx = e->hitbox.w * (h & HIT_RIGHT ? 1 : -1);
-	printf("kick %d ", dx);
+	int dx = e->hitbox.w * (h & HIT_RIGHT ? -1 : 1);
+	printf("%s kick %d ", st_names[e->st], dx);
 	print_hit(h);
 	e->pos.x += dx;
 
