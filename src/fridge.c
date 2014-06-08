@@ -729,8 +729,9 @@ static void set_group_state(group *g, enum state st)
 
 static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level const *terrain, SDL_bool grav)
 {
-	SDL_Rect r;
+	SDL_Rect r, n;
 	entity_hitbox(e, &r);
+	entity_hitbox(e, &n);
 
 	int dirx = v->x < 0 ? -1 : 1;
 	int diry = v->y < 0 ? -1 : 1;
@@ -744,15 +745,15 @@ static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level c
 	enum hit h;
 
 	for (i = 1; i < v_max + 1; i++) {
-		int dx = dirx * (i * vx - (i - 1) * vx) / v_max;
-		int dy = diry * (i * vy - (i - 1) * vy) / v_max;
-		r.x += dx;
-		r.y += dy;
+		int dx = dirx * (i * vx) / v_max;
+		int dy = diry * (i * vy) / v_max;
+		r.x = n.x + dx;
+		r.y = n.y + dy;
 		h = collides_with_terrain(&r, terrain);
 		if (h != HIT_NONE) { break; }
 		if (grav && !stands_on_terrain(&r, terrain)) { break; }
-		out.x += dx;
-		out.y += dy;
+		out.x = dx;
+		out.y = dy;
 	}
 
 	e->pos.x += out.x;
@@ -798,7 +799,8 @@ static int entity_jump(entity_state *e, level const *terrain)
 static int entity_fall(entity_state *e, level const *terrain, SDL_bool walk)
 {
 	e->fall_time += 1;
-	SDL_Point v = { x: walk ? e->dir * e->rule->walk_dist : 0, y: e->rule->fall_dist + e->fall_time };
+	entity_rule const *r = e->rule;
+	SDL_Point v = { x: walk ? e->dir * r->walk_dist : 0, y: r->fall_dist + e->fall_time };
 	SDL_Point w = entity_vector_move(e, &v, terrain, SDL_FALSE);
 	if (v.y != w.y) { e->fall_time = 0; }
 	return w.y;
