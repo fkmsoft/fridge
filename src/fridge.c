@@ -751,7 +751,12 @@ static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level c
 		r.y = n.y + dy;
 		h = collides_with_terrain(&r, terrain);
 		if (h != HIT_NONE) { break; }
-		if (grav && !stands_on_terrain(&r, terrain)) { break; }
+		if (grav && !stands_on_terrain(&r, terrain)) {
+			//break; // TODO or kick
+			r.y += 1;
+			h = collides_with_terrain(&r, terrain);
+			kick_entity(e, h);
+		}
 		out.x = dx;
 		out.y = dy;
 	}
@@ -812,7 +817,6 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 	move_log mlog = { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE, hang: SDL_FALSE };
 
 	hang_hit(HIT_NONE);
-	kick_entity(e, HIT_NONE);
 
 	if (ev->move_jump) { puts("jump"); }
 	switch (st_begin) {
@@ -991,10 +995,11 @@ static int kick_entity(entity_state *e, enum hit h)
 	if (h == HIT_NONE || h & HIT_TOP) { return 0; }
 	if ((h & HIT_RIGHT && h & HIT_LEFT)) { return 0; }
 
-	int dx = e->hitbox.w * (h & HIT_RIGHT ? -1 : 1);
+	int dx = e->hitbox.w * (h & HIT_RIGHT ? -1 : 1) / 2;
 	printf("%s kick %d ", st_names[e->st], dx);
 	print_hit(h);
 	e->pos.x += dx;
+	e->pos.y += 10;
 
 	return dx;
 }
@@ -1025,8 +1030,8 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 	int tp2 = r2->y;
 	int bt2 = tp2 + r2->h;
 
-	return (between(lf1, lf2, rt2) || between(rt1, lf2, rt2)) &&
-	       (between(tp1, tp2, bt2) || between(bt1, tp2, bt2));
+	return (between(lf1, lf2, rt2) || between(rt1, lf2, rt2) || between(lf2, lf1, rt1) || between(rt2, lf1, rt1)) &&
+	       (between(tp1, tp2, bt2) || between(bt1, tp2, bt2) || between(tp2, tp1, bt1) || between(bt2, tp1, bt1));
 }
 
 static enum hit intersects(line const *l, SDL_Rect const *r)
