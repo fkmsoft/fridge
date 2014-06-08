@@ -17,7 +17,7 @@
                 "woman":  { "resource": "woman.json",
                             "walk-dist": 5 },
 				"zombie": { "resource": "zombie.json",
-							"walk-dist": 4 },
+							"walk-dist": 2 },
                 "ghost":  { "resource": "ghost.json",
                             "walk-dist": 2 },
                 "player": { "resource": "player.json",
