@@ -1,4 +1,4 @@
-{ "asset": "player2.gif",
+{ "asset": "player2.tga",
   "frame_size": [32, 64],
   "frame_count": 17,
   "idle": { "frames":   [ 0, 1, 2, 1,  0, 1, 2, 1,  0, 1, 2, 1,  0, 1, 2, 1], 
