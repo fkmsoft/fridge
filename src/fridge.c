@@ -27,8 +27,8 @@ enum mode { MODE_LOGO, MODE_INTRO, MODE_GAME, MODE_EXIT };
 enum msg_frequency { MSG_NEVER, MSG_ONCE, MSG_ALWAYS };
 static char const * const frq_names[] = { "never", "once", "always" };
 
-enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, NSTATES };
-static char const * const st_names[] = { "idle", "walk", "fall", "jump" };
+enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, ST_HANG, NSTATES };
+static char const * const st_names[] = { "idle", "walk", "fall", "jump", "hang" };
 
 typedef struct {
 	unsigned x;
@@ -46,6 +46,7 @@ typedef struct {
 
 typedef struct {
 	unsigned n;
+	int timeout;
 	SDL_Texture *tex;
 	message *msgs;
 	SDL_Rect box;
@@ -77,7 +78,8 @@ typedef struct {
 typedef struct {
 	SDL_Rect start_dim;
 	int walk_dist;
-	int jump_dist;
+	int jump_dist_x;
+	int jump_dist_y;
 	int jump_time;
 	int fall_dist;
 	double a_wide;
@@ -138,6 +140,7 @@ typedef struct {
 } game_state;
 
 typedef struct {
+	SDL_bool walk;
 	SDL_bool move_left;
 	SDL_bool move_right;
 	SDL_bool move_jump;
@@ -148,6 +151,7 @@ typedef struct {
 	int jumped;
 	int fallen;
 	SDL_bool turned;
+	SDL_bool hang;
 } move_log;
 
 typedef struct {
@@ -536,8 +540,8 @@ static void process_event(SDL_Event const *ev, game_event *r)
 
 static void process_keystate(unsigned char const *ks, game_event *r)
 {
-	if (ks[SDL_SCANCODE_LEFT ]) { r->player.move_left  = SDL_TRUE; }
-	if (ks[SDL_SCANCODE_RIGHT]) { r->player.move_right = SDL_TRUE; }
+	if (ks[SDL_SCANCODE_LEFT ]) { r->player.move_left  = SDL_TRUE; r->player.walk = SDL_TRUE; }
+	if (ks[SDL_SCANCODE_RIGHT]) { r->player.move_right = SDL_TRUE; r->player.walk = SDL_TRUE; }
 }
 
 static void update_gamestate(session *s, game_state *gs, game_event const *ev)
@@ -602,7 +606,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		gs->debug.show_terrain_collision = !gs->debug.show_terrain_collision;
 	}
 
-	move_log mlog = { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE };
+	move_log mlog = { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE, hang: SDL_FALSE };
 
 	tick_animation(&gs->player);
 	int i;
@@ -622,46 +626,47 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 	entity_rule const *pr = gs->player.rule;
 
 	SDL_Rect r;
-	if (ev->player.move_left || ev->player.move_right) {
+	if (ev->player.walk) {
 
 		enum dir old_dir = gs->player.dir;
 		gs->player.dir = ev->player.move_left ? DIR_LEFT : DIR_RIGHT;
 		mlog.turned = old_dir != gs->player.dir;
 		if (!(gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_HIGH)) {
-		mlog.walked = player_walk(&gs->player, s->collision, &s->screen, gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE ? 9 : pr->walk_dist) * gs->player.dir;
+			mlog.walked = player_walk(&gs->player, s->collision, &s->screen, gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE ? pr->jump_dist_x : pr->walk_dist) * gs->player.dir;
 		}
 	}
 
 	if (ev->player.move_jump && gs->player.st != ST_FALL && gs->player.st != ST_JUMP) {
 		gs->player.jump_timeout = pr->jump_time;
-		gs->player.jump_type = (ev->player.move_left || ev->player.move_right) ? JUMP_WIDE : JUMP_HIGH;
+		gs->player.jump_type = ev->player.walk ? JUMP_WIDE : JUMP_HIGH;
 	}
 
 	if (gs->player.jump_timeout > 0 && gs->player.jump_type == JUMP_WIDE && mlog.walked == 0) {
 		gs->player.jump_timeout = 0;
 	}
 	
+	player_hitbox(&gs->player, &s->screen, &r);
 	if (gs->player.jump_timeout > 0) {
 		gs->player.jump_timeout -= 1;
 		
-		player_hitbox(&gs->player, &s->screen, &r);
 		int f;
 		double a = (gs->player.jump_type == JUMP_WIDE) ?
 				pr->a_wide : pr->a_high;
-		for (f = pr->jump_dist + gs->player.jump_timeout * a; f > 0; f--) {
+		for (f = pr->jump_dist_y + gs->player.jump_timeout * a; f > 0; f--) {
 			enum hit h = collides_with_terrain(&r, s->collision);
+			if (gs->player.st == ST_HANG) { h = HIT_NONE; }
 			if (h != HIT_NONE) {
 				printf("jump ");
 				print_hit(h);
 				gs->player.jump_timeout = 0;
+				mlog.hang = h & HIT_TOP && !(h & HIT_LEFT && h & HIT_RIGHT);
 				break;
 			}
 			r.y -= 1;
 			gs->player.pos.y -= 1;
 			mlog.jumped += 1;
 		}
-	} else {
-		player_hitbox(&gs->player, &s->screen, &r);
+	} else if (gs->player.st != ST_HANG) {
 		int f;
 		for (f = pr->fall_dist + 0.3 * gs->player.fall_time; f > 0; f--) {
 			if (stands_on_terrain(&r, s->collision)) {
@@ -675,8 +680,16 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		if (mlog.fallen != 0) { gs->player.fall_time += 1; }
 	}
 
+	mlog.hang = mlog.hang
+			|| (gs->player.st == ST_HANG && !ev->player.walk)
+			|| (mlog.fallen > 0 && collides_with_terrain(&r, s->collision) != HIT_NONE);
+
 	enum state old_state = gs->player.st;
-	if (mlog.fallen != 0) {
+	if (mlog.hang) {
+
+		gs->player.st = ST_HANG;
+
+	}  else if (mlog.fallen != 0) {
 
 		gs->player.st = ST_FALL;
 
@@ -713,7 +726,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 		if (in_rect(&s->msg.msgs[i].pos, &r)) {
 			gs->msg = &s->msg.msgs[i];
-			gs->msg_timeout = 12;
+			gs->msg_timeout = s->msg.timeout;
 			if (s->msg.msgs[i].when == MSG_ONCE) {
 				s->msg.msgs[i].when = MSG_NEVER;
 			}
@@ -918,6 +931,7 @@ static void clear_event(game_event *ev)
 	ev->player.move_left = SDL_FALSE;
 	ev->player.move_right = SDL_FALSE;
 	ev->player.move_jump = SDL_FALSE;
+	ev->player.walk = SDL_FALSE;
 	ev->exit = SDL_FALSE;
 	ev->toggle_debug = SDL_FALSE;
 	ev->toggle_pause = SDL_FALSE;
@@ -1229,6 +1243,7 @@ static SDL_bool load_messages(session *s, json_t *game, TTF_Font *font, int font
 	mi->line = (SDL_Rect) { x: json_integer_value(json_array_get(pos, 0)),
 	                        y: json_integer_value(json_array_get(pos, 1)),
 				h: fontsize };
+	mi->timeout = json_integer_value(json_object_get(o, "timeout"));
 
 	o = json_object_get(game, "messages");
 	int k = json_array_size(o);
@@ -1285,7 +1300,8 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	path = set_path("%s/%s/%s", root, CONF_DIR, ps);
 
 	get_int_field(src, n, "walk-dist", &er->walk_dist);
-	get_int_field(src, n, "jump-dist", &er->jump_dist);
+	get_int_field(src, n, "jump-dist-y", &er->jump_dist_y);
+	get_int_field(src, n, "jump-dist-x", &er->jump_dist_x);
 	get_int_field(src, n, "jump-time", &er->jump_time);
 	get_int_field(src, n, "fall-dist", &er->fall_dist);
 	get_float_field(src, n, "wide-jump-factor", &er->a_wide);
