@@ -1,5 +1,5 @@
-{ "asset": "ghost.gif",
-  "frame_size": [32, 64],
-  "frame_count": 2,
-  "idle": { "frames": [0, 1], "duration": [4, 10], "box": [1, 20, 30, 40] },
-  "walk": { "frames": [0, 1], "duration": [4, 10], "box": [1, 20, 30, 40] }}
+{ "asset": "ghost.png",
+  "frame_size": [48, 64],
+  "frame_count": 3,
+  "idle": { "frames": [0, 1, 2], "duration": [10, 3, 3], "box": [1, 20, 30, 40] },
+  "walk": { "frames": [0, 1, 2], "duration": [10, 3, 3], "box": [1, 20, 30, 40] }}
