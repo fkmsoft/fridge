@@ -4,8 +4,15 @@ fridge
 This is a rewrite of the 2012 hackathon jump'n'run game "fridge filler"
 in C using the SDL2.
 
-Dependencies:
+Shortcuts
+R = Reset the player position to its origin.
+Q = Quit the game.
+D = Start the debug mode.
+ -> U = Reload the config.
+ -> P = Pause enemy movement
+ -> B = Show collision lines of the map. 
 
+Dependencies:
 * SDL2
 * SDL2_ttf
 * SDL2_image
@@ -16,8 +23,10 @@ Used Assets:
 * Pizza Sprite by Gobusto: http://opengameart.org/content/pizza-sprite (CC-BY-SA 3.0)
 * Floppy Disc by Gobusto: http://opengameart.org/content/floppy-disk (CC-BY-SA 3.0)
 * Pixel Art TV Set by Kieff: http://opengameart.org/content/pixel-art-tv-set (CC-BY-SA 3.0)
-* Ghost Lvl1,2,3 (60px) by qubodup: http://opengameart.org/content/ghost-lvl1-2-3-60px (CC-BY-SA 3.0)
 * 04 font: http://04.jp.org/ (public domain)
 
 Used Code:
 * getpixel() from: http://sdl.beuc.net/sdl.wiki/Pixel_Access
+
+Formerly Used Assets:
+* Ghost Lvl1,2,3 (60px) by qubodup: http://opengameart.org/content/ghost-lvl1-2-3-60px (CC-BY-SA 3.0)
