@@ -122,7 +122,7 @@ typedef struct {
 	entity_state *e;
 } group;
 
-enum group { GROUP_OBJECTS, GROUP_ENEMIES, NGROUPS };
+enum group { GROUP_PLAYER, GROUP_OBJECTS, GROUP_ENEMIES, NGROUPS };
 
 typedef struct {
 	SDL_bool active;
@@ -136,7 +136,6 @@ typedef struct {
 
 typedef struct {
 	int need_to_collect;
-	entity_state player;
 	entity_state logo;
 	entity_state intro;
 	group entities[NGROUPS];
@@ -187,7 +186,7 @@ static void tick_animation(entity_state *as);
 static void set_group_state(group *g, enum state st);
 static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level const *terrain, SDL_bool grav);
 static int entity_walk(entity_state *e, level const *terrain);
-static int entity_jump(entity_state *e, level const *terrain);
+static int entity_jump(entity_state *e, level const *terrain, SDL_bool walk, SDL_bool jump);
 static void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move_log *mlog);
 static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *player);
 static void load_state(entity_state *es);
@@ -340,7 +339,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const *root)
 {
-	json_t *player, *spawn, *entities, *fnt, *level;
+	json_t *entities, *fnt, *level;
 	char const *path;
 
 	/* load config */
@@ -405,26 +404,9 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 		i += 1;
 	}
 
+	init_group(&gs->entities[GROUP_PLAYER], game, "players", e_texs, e_rules, ST_IDLE);
 	init_group(&gs->entities[GROUP_OBJECTS], game, "objects", e_texs, e_rules, ST_IDLE);
 	init_group(&gs->entities[GROUP_ENEMIES], game, "enemies", e_texs, e_rules, ST_WALK);
-
-	int pi;
-	player = json_object_get(entities, "player");
-	if (!player) {
-		fprintf(stderr, "error: no player entity defined\n");
-		return SDL_FALSE;
-	}
-	pi = json_integer_value(json_object_get(player, "index"));
-
-	spawn = json_object_get(game, "spawn");
-	if (!spawn) {
-		fprintf(stderr, "error: no spawn coordinates defined\n");
-		return SDL_FALSE;
-	}
-
-	gs->player.spawn.x = json_integer_value(json_array_get(spawn, 0));
-	gs->player.spawn.y = json_integer_value(json_array_get(spawn, 1));
-	init_entity_state(&gs->player, &e_rules[pi], e_texs[pi], ST_IDLE);
 
 	load_intro(&gs->logo, s, entities, "logo", e_rules, e_texs);
 	load_intro(&gs->intro, s, entities, "intro", e_rules, e_texs);
@@ -561,6 +543,7 @@ static void process_keystate(unsigned char const *ks, game_event *r)
 {
 	if (ks[SDL_SCANCODE_LEFT ]) { r->player.move_left  = SDL_TRUE; r->player.walk = SDL_TRUE; }
 	if (ks[SDL_SCANCODE_RIGHT]) { r->player.move_right = SDL_TRUE; r->player.walk = SDL_TRUE; }
+	if (ks[SDL_SCANCODE_SPACE]) { r->player.move_jump = SDL_TRUE; }
 }
 
 static void update_gamestate(session *s, game_state *gs, game_event const *ev)
@@ -604,12 +587,12 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 			if (*e.text != 0) {
 				fprintf(stderr, "error: in %s:%d: %s\n", p, e.line, e.text);
 			} else {
-				SDL_Point ps = gs->player.pos;
-				enum dir dr = gs->player.dir;
+				SDL_Point ps = gs->entities[GROUP_PLAYER].e[0].pos;
+				enum dir dr = gs->entities[GROUP_PLAYER].e[0].dir;
 				fprintf(stderr, "info: re-loading config\n");
 				load_config(s, gs, g, r);
-				gs->player.pos = ps;
-				gs->player.dir = dr;
+				gs->entities[GROUP_PLAYER].e[0].pos = ps;
+				gs->entities[GROUP_PLAYER].e[0].dir = dr;
 			}
 		}
 	}
@@ -623,7 +606,6 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		gs->debug.show_terrain_collision = !gs->debug.show_terrain_collision;
 	}
 
-	tick_animation(&gs->player);
 	int i;
 	enum group g;
 	for (g = 0; g < NGROUPS; g++) {
@@ -636,21 +618,23 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 	if (!gs->debug.active || !gs->debug.pause) {
 		SDL_Rect h;
-		entity_hitbox(&gs->player, &h);
+		entity_hitbox(&gs->entities[GROUP_PLAYER].e[0], &h);
 		enemy_movement(&s->level, &gs->entities[GROUP_ENEMIES], &h);
 	}
 
-	enum state old_state = gs->player.st;
+	enum state old_state = gs->entities[GROUP_PLAYER].e[0].st;
 	move_log log;
-	move_entity(&gs->player, &ev->player, &s->level, &log);
+	move_entity(&gs->entities[GROUP_PLAYER].e[0], &ev->player, &s->level, &log);
 
-	if (old_state != gs->player.st) {
-		printf("%s -> %s\n", st_names[old_state], st_names[gs->player.st]);
-		load_state(&gs->player);
+	if (old_state != gs->entities[GROUP_PLAYER].e[0].st) {
+		/* print_state
+		*/
+		printf("%s -> %s\n", st_names[old_state], st_names[gs->entities[GROUP_PLAYER].e[0].st]);
+		load_state(&gs->entities[GROUP_PLAYER].e[0]);
 	}
 
 	if (ev->reset) {
-		init_entity_state(&gs->player, 0, 0, ST_IDLE);
+		init_entity_state(&gs->entities[GROUP_PLAYER].e[0], 0, 0, ST_IDLE);
 	}
 
 	if (gs->msg_timeout > 0) {
@@ -659,7 +643,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		gs->msg = 0;
 	}
 	SDL_Rect r;
-	entity_hitbox(&gs->player, &r);
+	entity_hitbox(&gs->entities[GROUP_PLAYER].e[0], &r);
 	for (i = 0; i < s->msg.n; i++) {
 		if (s->msg.msgs[i].when == MSG_NEVER) {
 			continue;
@@ -689,7 +673,9 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 					gs->need_to_collect -= 1;
 					break;
 				case GROUP_ENEMIES:
-					init_entity_state(&gs->player, 0, 0, ST_IDLE);
+					init_entity_state(&gs->entities[GROUP_PLAYER].e[0], 0, 0, ST_IDLE);
+					break;
+				case GROUP_PLAYER:
 					break;
 				case NGROUPS:
 					fprintf(stderr,"line %d: can never happen\n", __LINE__);
@@ -698,7 +684,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		}
 	}
 
-	entity_hitbox(&gs->player, &r);
+	entity_hitbox(&gs->entities[GROUP_PLAYER].e[0], &r);
 	if (in_rect(&s->finish.pos,  &r)) {
 		if (gs->need_to_collect == 0) {
 			gs->msg = &s->finish.win;
@@ -788,15 +774,17 @@ static int entity_start_jump(entity_state *e, level const *terrain, enum jump_ty
 	e->jump_timeout = e->rule->jump_time;
 	e->jump_type = t;
 
-	return entity_jump(e, terrain);
+	return entity_jump(e, terrain, t == JUMP_WIDE, SDL_TRUE);
 }
 
-static int entity_jump(entity_state *e, level const *terrain)
+static int entity_jump(entity_state *e, level const *terrain, SDL_bool walk, SDL_bool jump)
 {
-	if (e->jump_timeout == 0) { return 0; }
-
 	entity_rule const *r = e->rule;
-	SDL_Point v = { x: e->jump_type == JUMP_WIDE ? e->dir * r->jump_dist_x : 0,
+	if (e->jump_timeout == 0) {
+		return r->has_gravity ? 0 : jump ? entity_start_jump(e, terrain, JUMP_HIGH) : 0;
+	}
+
+	SDL_Point v = { x: e->jump_type == JUMP_WIDE ? e->dir * r->jump_dist_x : r->has_gravity ? 0 : walk ? e->dir * r->walk_dist : 0,
 	                y: r->jump_dist_y };
 	if (r->has_gravity) { v.y += e->jump_timeout; }
 	v.y *= -1;
@@ -847,15 +835,7 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 		break;
 	case ST_JUMP:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
-		if (e->rule->has_gravity) {
-			mlog->jumped = entity_jump(e, lvl);
-		} else {
-			if (ev->move_jump) {
-				mlog->jumped = entity_jump(e, lvl);
-			} else {
-				mlog->fallen = entity_fall(e, lvl, ev->walk);
-			}
-		}
+		mlog->jumped = entity_jump(e, lvl, ev->walk, ev->move_jump);
 		break;
 	case ST_FALL:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
@@ -934,9 +914,8 @@ static void render(session const *s, game_state const *gs)
 	int i;
 	SDL_RenderClear(s->r);
 
-	//SDL_Rect screen = { x: gs->player.pos.x, y: gs->player.pos.y, w: s->screen.x, h: s->screen.y };
-	SDL_Rect screen = { x: gs->player.pos.x - (s->screen.x - gs->player.spawn.w) / 2,
-	                    y: gs->player.pos.y - (s->screen.y - gs->player.spawn.h) / 2,
+	SDL_Rect screen = { x: gs->entities[GROUP_PLAYER].e[0].pos.x - (s->screen.x - gs->entities[GROUP_PLAYER].e[0].spawn.w) / 2,
+	                    y: gs->entities[GROUP_PLAYER].e[0].pos.y - (s->screen.y - gs->entities[GROUP_PLAYER].e[0].spawn.h) / 2,
 			    w: s->screen.x, h: s->screen.y };
 
 	switch (gs->run) {
@@ -967,7 +946,7 @@ static void render(session const *s, game_state const *gs)
 			draw_message_boxes(s->r, &s->msg, &screen);
 		}
 
-		draw_entity(s->r, &screen, &gs->player, &gs->debug);
+		draw_entity(s->r, &screen, &gs->entities[GROUP_PLAYER].e[0], &gs->debug);
 
 		if (gs->msg) {
 			draw_message(s->r, s->msg.tex, gs->msg, &s->msg.box, &s->msg.line);
