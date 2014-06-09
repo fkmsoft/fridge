@@ -19,6 +19,7 @@
 #define CONF_DIR  "conf"
 
 #define streq(s1, s2) !strcmp(s1, s2)
+#define between(x, y1, y2) (x >= y1 && x <= y2)
 
 enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
 enum hit { HIT_NONE = 0, HIT_TOP = 1, HIT_LEFT = 1 << 1, HIT_RIGHT = 1 << 2, HIT_BOT = 1 << 3 };
@@ -186,18 +187,19 @@ static void set_group_state(group *g, enum state st);
 static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level const *terrain, SDL_bool grav);
 static int entity_walk(entity_state *e, level const *terrain);
 static int entity_jump(entity_state *e, level const *terrain);
-static void move_entity(entity_state *e, entity_event const *ev, level const *lvl);
-static void enemy_movement(level const *terrain, group *nmi);
+static void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move_log *mlog);
+static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *player);
 static void load_state(entity_state *es);
 static void render(session const *s, game_state const *gs);
 static void clear_game(game_state *gs);
+static void clear_order(entity_event *o);
 static void clear_event(game_event *ev);
 static void clear_debug(debug_state *d);
 
 /* collisions */
 static enum hit collides_with_terrain(SDL_Rect const *r, level const *lev);
 static SDL_bool hang_hit(enum hit h);
-static int kick_entity(entity_state *e, enum hit h);
+static int kick_entity(entity_state *e, enum hit h, SDL_Point const *v);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t);
 static SDL_bool in_rect(SDL_Point const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
@@ -223,9 +225,10 @@ static void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const
 static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect const *screen);
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line);
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
-static unsigned getpixel(SDL_Surface const *s, int x, int y);
 static char const *set_path(char const *fmt, ...);
+#if 0
 static void print_hit(enum hit h);
+#endif
 
 int main(void) {
 	SDL_bool ok;
@@ -631,11 +634,14 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 	}
 
 	if (!gs->debug.active || !gs->debug.pause) {
-		enemy_movement(&s->level, &gs->entities[GROUP_ENEMIES]);
+		SDL_Rect h;
+		entity_hitbox(&gs->player, &h);
+		enemy_movement(&s->level, &gs->entities[GROUP_ENEMIES], &h);
 	}
 
 	enum state old_state = gs->player.st;
-	move_entity(&gs->player, &ev->player, &s->level);
+	move_log log;
+	move_entity(&gs->player, &ev->player, &s->level, &log);
 
 	if (old_state != gs->player.st) {
 		printf("%s -> %s\n", st_names[old_state], st_names[gs->player.st]);
@@ -753,10 +759,11 @@ static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level c
 		h = collides_with_terrain(&r, terrain);
 		if (h != HIT_NONE) { break; }
 		if (grav && !stands_on_terrain(&r, terrain)) {
-			break; // TODO or kick
+			break; // or kick
 			r.y += 1;
 			h = collides_with_terrain(&r, terrain);
-			kick_entity(e, h);
+			SDL_Point v = { .x = e->hitbox.w / 2, .y = e->hitbox.h / 5 };
+			kick_entity(e, h, &v);
 		}
 		out.x = dx;
 		out.y = dy;
@@ -794,7 +801,6 @@ static int entity_jump(entity_state *e, level const *terrain)
 	v.y *= -1;
 	SDL_Point w = entity_vector_move(e, &v, terrain, SDL_FALSE);
 	if (w.y != v.y) {
-		printf("cancel: %d != %d\n", w.y, v.y);
 		e->jump_timeout = 0;
 	} else {
 		e->jump_timeout -= 1;
@@ -818,10 +824,10 @@ static int entity_fall(entity_state *e, level const *terrain, SDL_bool walk)
 	return w.y;
 }
 
-static void move_entity(entity_state *e, entity_event const *ev, level const *lvl)
+static void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move_log *mlog)
 {
 	enum state st_begin = e->st;
-	move_log mlog = { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE, hang: SDL_FALSE };
+	*mlog = (move_log) { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE, hang: SDL_FALSE };
 
 	hang_hit(HIT_NONE);
 
@@ -830,28 +836,28 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 	case ST_WALK:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
 		if (ev->move_jump) {
-			mlog.jumped = entity_start_jump(e, lvl, ev->walk ? JUMP_WIDE : JUMP_HIGH);
+			mlog->jumped = entity_start_jump(e, lvl, ev->walk ? JUMP_WIDE : JUMP_HIGH);
 		} else if (ev->walk) {
-			mlog.walked = entity_walk(e, lvl);
+			mlog->walked = entity_walk(e, lvl);
 		}
 		break;
 	case ST_HANG:
 		break;
 	case ST_JUMP:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
-		mlog.jumped = entity_jump(e, lvl);
+		mlog->jumped = entity_jump(e, lvl);
 		break;
 	case ST_FALL:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
-		mlog.fallen = entity_fall(e, lvl, ev->walk);
+		mlog->fallen = entity_fall(e, lvl, ev->walk);
 		SDL_Rect h;
 		entity_hitbox(e, &h);
-		if (mlog.fallen == 0 && !stands_on_terrain(&h, lvl)) {
+		if (mlog->fallen == 0 && !stands_on_terrain(&h, lvl)) {
 			h.y += 1;
 			enum hit where = collides_with_terrain(&h, lvl);
-			puts("unstick");
-			print_hit(where);
-			kick_entity(e, where);
+			//SDL_Point v = { .x = - e->hitbox.w / 2, .y = 0 };
+			SDL_Point v = { .x = -1, .y = 0 };
+			kick_entity(e, where, &v);
 		}
 		break;
 	case NSTATES:
@@ -860,17 +866,34 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 
 	SDL_Rect h;
 	entity_hitbox(e, &h);
-	e->st = mlog.jumped > 0 ? ST_JUMP : stands_on_terrain(&h, lvl) ? mlog.walked > 0 ? ST_WALK : ST_IDLE : ST_FALL;
+	e->st = mlog->jumped > 0 ? ST_JUMP : stands_on_terrain(&h, lvl) ? mlog->walked > 0 ? ST_WALK : ST_IDLE : ST_FALL;
 }
 
-static void enemy_movement(level const *terrain, group *nmi)
+static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *player)
 {
-	int i, k;
+	int i;
 	for (i = 0; i < nmi->n; i++) {
-		k = entity_walk(&nmi->e[i], terrain);
-		if (k < 1) {
-			nmi->e[i].dir *= -1;
-			entity_walk(&nmi->e[i], terrain);
+		entity_state *e = &nmi->e[i];
+		entity_event order;
+		clear_order(&order);
+		SDL_Rect h;
+		entity_hitbox(e, &h);
+		SDL_bool track = SDL_FALSE;
+		if (between(player->y, h.y, h.y + h.h) || between(h.y, player->y, player->y + player->h)) {
+			e->dir = (e->pos.x < player->x) ? DIR_RIGHT : DIR_LEFT;
+			track = SDL_TRUE;
+		} else if (between(player->x, h.x, h.x + h.w) && e->pos.y > player->y) {
+			order.move_jump = SDL_TRUE;
+			track = SDL_TRUE;
+		}
+		h.x += e->dir * e->rule->walk_dist;
+		if (stands_on_terrain(&h, terrain)) {
+			order.walk = SDL_TRUE;
+		}
+		move_log log;
+		move_entity(e, &order, terrain, &log);
+		if (!track && log.walked == 0 && log.jumped == 0 && log.fallen == 0) {
+			e->dir *= -1;
 		}
 	}
 }
@@ -946,12 +969,17 @@ static void clear_game(game_state *gs)
 	clear_debug(&gs->debug);
 }
 
+static void clear_order(entity_event *o)
+{
+	o->move_left = SDL_FALSE;
+	o->move_right = SDL_FALSE;
+	o->move_jump = SDL_FALSE;
+	o->walk = SDL_FALSE;
+}
+
 static void clear_event(game_event *ev)
 {
-	ev->player.move_left = SDL_FALSE;
-	ev->player.move_right = SDL_FALSE;
-	ev->player.move_jump = SDL_FALSE;
-	ev->player.walk = SDL_FALSE;
+	clear_order(&ev->player);
 	ev->exit = SDL_FALSE;
 	ev->toggle_debug = SDL_FALSE;
 	ev->toggle_pause = SDL_FALSE;
@@ -995,18 +1023,15 @@ static SDL_bool hang_hit(enum hit h)
 	return !(h & HIT_BOT) && h & HIT_TOP && !(h & HIT_LEFT && h & HIT_RIGHT);
 }
 
-static int kick_entity(entity_state *e, enum hit h)
+static int kick_entity(entity_state *e, enum hit h, SDL_Point const *v)
 {
 	if (h == HIT_NONE || h & HIT_TOP) { return 0; }
 	if ((h & HIT_RIGHT && h & HIT_LEFT)) { return 0; }
 
-	int dx = e->hitbox.w * (h & HIT_RIGHT ? -1 : 1) / 2;
-	printf("%s kick %d ", st_names[e->st], dx);
-	print_hit(h);
-	e->pos.x += dx;
-	e->pos.y += 10;
+	e->pos.x += v->x * (h & HIT_RIGHT ? -1 : 1);
+	e->pos.y += v->y;
 
-	return dx;
+	return 0;
 }
 
 static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t)
@@ -1021,7 +1046,6 @@ static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t)
 	return SDL_FALSE;
 }
 
-#define between(x, y1, y2) (x >= y1 && x <= y2)
 static SDL_bool in_rect(SDL_Point const *p, SDL_Rect const *r)
 {
 	return between(p->x, r->x, r->x + r->w) &&
@@ -1087,7 +1111,6 @@ static enum hit intersects(line const *l, SDL_Rect const *r)
 
 	return HIT_NONE;
 }
-#undef between
 
 static void entity_hitbox(entity_state const *s, SDL_Rect *box)
 {
@@ -1417,7 +1440,11 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 
 	int i;
 	for (i = 0; i < NSTATES; i++) {
+		er->anim[i].frames = 0;
 		load_anim(o, n, st_names[i], &er->anim[i]);
+		if (!er->anim[i].frames) {
+			er->anim[i] = er->anim[ST_IDLE];
+		}
 	}
 
 	json_decref(o);
@@ -1480,35 +1507,6 @@ static void load_anim(json_t *src, char const *name, char const *key, animation_
 	a->box.h = json_integer_value(json_array_get(box, 3));
 }
 
-static unsigned getpixel(SDL_Surface const *s, int x, int y)
-{
-	return 1;
-	int bpp = s->format->BytesPerPixel;
-	unsigned char *p = (unsigned char *)s->pixels + y * s->pitch + x * bpp;
-
-	switch (bpp) {
-	case 1:
-		return *p;
-		break;
-	case 2:
-		return *(short *)p;
-		break;
-	case 3:
-		if (SDL_BYTEORDER == SDL_BIG_ENDIAN) {
-			return p[0] << 16 | p[1] << 8 | p[2];
-		} else {
-			return p[0] | p[1] << 8 | p[2] << 16;
-		}
-		break;
-	case 4:
-		return *(unsigned *)p;
-		break;
-	default:
-		fprintf(stderr, "getpixel: unsupported image format: %d bytes per pixel\n", bpp);
-		return 0;
-	}
-}
-
 static char const *set_path(char const *fmt, ...)
 {
 	static char buf[MAX_PATH];
@@ -1522,6 +1520,7 @@ static char const *set_path(char const *fmt, ...)
 	return buf;
 }
 
+#if 0
 static void print_hit(enum hit h)
 {
 	printf("hit:");
@@ -1531,3 +1530,4 @@ static void print_hit(enum hit h)
 	if (h & HIT_BOT) { printf(" bot"); }
 	puts("");
 }
+#endif
