@@ -4,7 +4,10 @@ fridge
 This is a rewrite of the 2012 hackathon jump'n'run game "fridge filler"
 in C using the SDL2.
 
-Shortcuts
+Movement:
+Walk with arrow keys, jump with space bar.
+
+Shortcuts:
 R = Reset the player position to its origin.
 Q = Quit the game.
 D = Start the debug mode.
@@ -25,8 +28,6 @@ Used Assets:
 * Pixel Art TV Set by Kieff: http://opengameart.org/content/pixel-art-tv-set (CC-BY-SA 3.0)
 * 04 font: http://04.jp.org/ (public domain)
 
-Used Code:
-* getpixel() from: http://sdl.beuc.net/sdl.wiki/Pixel_Access
-
-Formerly Used Assets:
+Formerly Used:
 * Ghost Lvl1,2,3 (60px) by qubodup: http://opengameart.org/content/ghost-lvl1-2-3-60px (CC-BY-SA 3.0)
+* getpixel() from: http://sdl.beuc.net/sdl.wiki/Pixel_Access

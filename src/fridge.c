@@ -698,6 +698,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 		if (gs->need_to_collect == 0) {
 			gs->msg = &s->finish.win;
 		} else {
+			printf("need to collect: %d\n", gs->need_to_collect);
 			gs->msg = &s->finish.loss;
 		}
 	}
@@ -810,9 +811,11 @@ static int entity_fall(entity_state *e, level const *terrain, SDL_bool walk)
 {
 	e->fall_time += 1;
 	SDL_Point v, w;
-	v = (SDL_Point) { x: 0, y: 1 };
-	w = entity_vector_move(e, &v, terrain, SDL_FALSE);
-	if (v.y != w.y) { e->fall_time = 0; return 0; }
+	if (e->rule->has_gravity) {
+		v = (SDL_Point) { x: 0, y: 1 };
+		w = entity_vector_move(e, &v, terrain, SDL_FALSE);
+		if (v.y != w.y) { e->fall_time = 0; return 0; }
+	}
 
 	entity_rule const *r = e->rule;
 	v = (SDL_Point) { x: walk ? e->dir * r->walk_dist : 0,
@@ -848,11 +851,14 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 		break;
 	case ST_FALL:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
-		if (!e->rule->has_gravity) { 
+		if (!e->rule->has_gravity) {
 			if (ev->move_jump) {
 				mlog->jumped = entity_start_jump(e, lvl, JUMP_HIGH);
+			} else if (ev->walk) {
+				mlog->walked = entity_walk(e, lvl);
+				mlog->fallen = entity_fall(e, lvl, SDL_FALSE);
 			} else {
-				mlog->fallen = entity_fall(e, lvl, ev->walk);
+				mlog->fallen = entity_fall(e, lvl, SDL_FALSE);
 			}
 		} else {
 			mlog->fallen = entity_fall(e, lvl, ev->walk);
@@ -861,7 +867,6 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 			if (mlog->fallen == 0 && !stands_on_terrain(&h, lvl)) {
 				h.y += 1;
 				enum hit where = collides_with_terrain(&h, lvl);
-				//SDL_Point v = { .x = - e->hitbox.w / 2, .y = 0 };
 				SDL_Point v = { .x = -1, .y = 0 };
 				kick_entity(e, where, &v);
 			}
@@ -895,12 +900,12 @@ static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *pla
 			track = SDL_TRUE;
 		}
 		h.x += e->dir * e->rule->walk_dist;
-		if (!e->rule->has_gravity || stands_on_terrain(&h, terrain)) {
+		if (!collides_with_terrain(&h, terrain) && (!e->rule->has_gravity || stands_on_terrain(&h, terrain))) {
 			order.walk = SDL_TRUE;
 		}
 		move_log log;
 		move_entity(e, &order, terrain, &log);
-		if (!track && log.walked == 0 && log.jumped == 0 && log.fallen == 0) {
+		if (!track && !order.walk) {
 			e->dir *= -1;
 		}
 	}
