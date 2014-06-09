@@ -88,6 +88,7 @@ typedef struct {
 	int jump_dist_y;
 	int jump_time;
 	int fall_dist;
+	SDL_bool has_gravity;
 	double a_wide;
 	double a_high;
 	animation_rule anim[NSTATES];
@@ -778,7 +779,7 @@ static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level c
 static int entity_walk(entity_state *e, level const *terrain)
 {
 	SDL_Point v = { x: e->dir * e->rule->walk_dist, y: 0 };
-	SDL_Point r = entity_vector_move(e, &v, terrain, SDL_TRUE);
+	SDL_Point r = entity_vector_move(e, &v, terrain, e->rule->has_gravity);
 	return r.x < 0 ? -r.x : r.x;
 }
 
@@ -796,8 +797,8 @@ static int entity_jump(entity_state *e, level const *terrain)
 
 	entity_rule const *r = e->rule;
 	SDL_Point v = { x: e->jump_type == JUMP_WIDE ? e->dir * r->jump_dist_x : 0,
-	                y: r->jump_dist_y + e->jump_timeout }; // +
-			   //e->jump_timeout * e->jump_type == JUMP_WIDE ? r->a_wide : r->a_high };
+	                y: r->jump_dist_y };
+	if (r->has_gravity) { v.y += e->jump_timeout; }
 	v.y *= -1;
 	SDL_Point w = entity_vector_move(e, &v, terrain, SDL_FALSE);
 	if (w.y != v.y) {
@@ -818,7 +819,8 @@ static int entity_fall(entity_state *e, level const *terrain, SDL_bool walk)
 
 	entity_rule const *r = e->rule;
 	v = (SDL_Point) { x: walk ? e->dir * r->walk_dist : 0,
-	                  y: r->fall_dist + e->fall_time };
+	                  y: r->fall_dist };
+	if (r->has_gravity) { v.y += e->fall_time; }
 	w = entity_vector_move(e, &v, terrain, SDL_FALSE);
 	if (v.y != w.y) { e->fall_time = 0; }
 	return w.y;
@@ -836,7 +838,7 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 	case ST_WALK:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
 		if (ev->move_jump) {
-			mlog->jumped = entity_start_jump(e, lvl, ev->walk ? JUMP_WIDE : JUMP_HIGH);
+			mlog->jumped = entity_start_jump(e, lvl, ev->walk ? e->rule->has_gravity ? JUMP_WIDE : JUMP_HIGH : JUMP_HIGH);
 		} else if (ev->walk) {
 			mlog->walked = entity_walk(e, lvl);
 		}
@@ -845,19 +847,35 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 		break;
 	case ST_JUMP:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
-		mlog->jumped = entity_jump(e, lvl);
+		if (e->rule->has_gravity) {
+			mlog->jumped = entity_jump(e, lvl);
+		} else {
+			if (ev->move_jump) {
+				mlog->jumped = entity_jump(e, lvl);
+			} else {
+				mlog->fallen = entity_fall(e, lvl, ev->walk);
+			}
+		}
 		break;
 	case ST_FALL:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
-		mlog->fallen = entity_fall(e, lvl, ev->walk);
-		SDL_Rect h;
-		entity_hitbox(e, &h);
-		if (mlog->fallen == 0 && !stands_on_terrain(&h, lvl)) {
-			h.y += 1;
-			enum hit where = collides_with_terrain(&h, lvl);
-			//SDL_Point v = { .x = - e->hitbox.w / 2, .y = 0 };
-			SDL_Point v = { .x = -1, .y = 0 };
-			kick_entity(e, where, &v);
+		if (!e->rule->has_gravity) { 
+			if (ev->move_jump) {
+				mlog->jumped = entity_start_jump(e, lvl, JUMP_HIGH);
+			} else {
+				mlog->fallen = entity_fall(e, lvl, ev->walk);
+			}
+		} else {
+			mlog->fallen = entity_fall(e, lvl, ev->walk);
+			SDL_Rect h;
+			entity_hitbox(e, &h);
+			if (mlog->fallen == 0 && !stands_on_terrain(&h, lvl)) {
+				h.y += 1;
+				enum hit where = collides_with_terrain(&h, lvl);
+				//SDL_Point v = { .x = - e->hitbox.w / 2, .y = 0 };
+				SDL_Point v = { .x = -1, .y = 0 };
+				kick_entity(e, where, &v);
+			}
 		}
 		break;
 	case NSTATES:
@@ -882,12 +900,13 @@ static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *pla
 		if (between(player->y, h.y, h.y + h.h) || between(h.y, player->y, player->y + player->h)) {
 			e->dir = (e->pos.x < player->x) ? DIR_RIGHT : DIR_LEFT;
 			track = SDL_TRUE;
-		} else if (between(player->x, h.x, h.x + h.w) && e->pos.y > player->y) {
+		}
+		if (between(player->x, h.x, h.x + h.w) && e->pos.y > player->y) {
 			order.move_jump = SDL_TRUE;
 			track = SDL_TRUE;
 		}
 		h.x += e->dir * e->rule->walk_dist;
-		if (stands_on_terrain(&h, terrain)) {
+		if (!e->rule->has_gravity || stands_on_terrain(&h, terrain)) {
 			order.walk = SDL_TRUE;
 		}
 		move_log log;
@@ -1422,6 +1441,8 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	get_int_field(src, n, "fall-dist", &er->fall_dist);
 	get_float_field(src, n, "wide-jump-factor", &er->a_wide);
 	get_float_field(src, n, "high-jump-factor", &er->a_high);
+	o = json_object_get(src, "has-gravity");
+	er->has_gravity = o ? streq(json_string_value(json_object_get(src, "has-gravity")), "yes") : SDL_TRUE;
 
 	json_error_t e;
 	o = json_load_file(path, 0, &e);
