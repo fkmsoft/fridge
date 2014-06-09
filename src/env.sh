@@ -1,1 +1,1 @@
-export FRIDGE_ROOT="/home/richard/code/fridge"
+export FRIDGE_ROOT="$HOME/code/fridge"

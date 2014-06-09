@@ -217,6 +217,7 @@ static int load_collisions(level *level, json_t const *o);
 static SDL_Texture *load_texture(SDL_Renderer *r, char const *file);
 static SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k);
 static SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k);
+static void load_entity_rule(json_t *src, entity_rule *er, char const *n);
 static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, entity_rule *er, char const *root);
 static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset);
 static void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
@@ -468,13 +469,21 @@ void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_t
 	json_t *spawn;
 	json_object_foreach(objs, name, o) {
 		int ei, j;
-		json_t *entity;
+		json_t *entity, *rules;
 		entity = json_object_get(entities, name);
 		ei = json_integer_value(json_object_get(entity, "index"));
 		json_array_foreach(o, j, spawn) {
 			a[i].spawn.x = json_integer_value(json_array_get(spawn, 0));
 			a[i].spawn.y = json_integer_value(json_array_get(spawn, 1));
-			init_entity_state(&a[i], &e_rules[ei], e_texs[ei], st);
+                        init_entity_state(&a[i], &e_rules[ei], e_texs[ei], st);
+                        rules = json_array_get(spawn, 2);
+                        if (rules) {
+                                entity_rule *custom;
+                                custom = malloc(sizeof(entity_rule));
+                                *custom = *a[i].rule;
+                                load_entity_rule(rules, custom, "custom-rule");
+                                a[i].rule = custom;
+                        }
 			i += 1;
 		}
 	}
@@ -1259,7 +1268,9 @@ static SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r)
 	var = json_object_get(o, s);
 	if (!var) {
 		fprintf(stderr, "warning: no %s for %s\n", s, n);
-		*r = 0;
+                if (!streq(n, "custom-rule")) {
+                        *r = 0;
+                }
 		return SDL_FALSE;
 	}
 	*r = json_integer_value(var);
@@ -1404,6 +1415,21 @@ static SDL_Surface *load_asset_surf(json_t *a, char const *root, char const *k)
 	return IMG_Load(p);
 }
 
+static void load_entity_rule(json_t *src, entity_rule *er, char const *n)
+{
+	get_int_field(src, n, "walk-dist", &er->walk_dist);
+	get_int_field(src, n, "jump-dist-y", &er->jump_dist_y);
+	get_int_field(src, n, "jump-dist-x", &er->jump_dist_x);
+	get_int_field(src, n, "jump-time", &er->jump_time);
+	get_int_field(src, n, "fall-dist", &er->fall_dist);
+	get_float_field(src, n, "wide-jump-factor", &er->a_wide);
+	get_float_field(src, n, "high-jump-factor", &er->a_high);
+	json_t *o = json_object_get(src, "has-gravity");
+        if (o || !streq(n, "custom-rule")) {
+                er->has_gravity = o ? streq(json_string_value(json_object_get(src, "has-gravity")), "yes") : SDL_TRUE;
+        }
+}
+
 static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, entity_rule *er, char const *root)
 {
 	json_t *o;
@@ -1413,15 +1439,7 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 	char const *path;
 	path = set_path("%s/%s/%s", root, CONF_DIR, ps);
 
-	get_int_field(src, n, "walk-dist", &er->walk_dist);
-	get_int_field(src, n, "jump-dist-y", &er->jump_dist_y);
-	get_int_field(src, n, "jump-dist-x", &er->jump_dist_x);
-	get_int_field(src, n, "jump-time", &er->jump_time);
-	get_int_field(src, n, "fall-dist", &er->fall_dist);
-	get_float_field(src, n, "wide-jump-factor", &er->a_wide);
-	get_float_field(src, n, "high-jump-factor", &er->a_high);
-	o = json_object_get(src, "has-gravity");
-	er->has_gravity = o ? streq(json_string_value(json_object_get(src, "has-gravity")), "yes") : SDL_TRUE;
+        load_entity_rule(src, er, n);
 
 	json_error_t e;
 	o = json_load_file(path, 0, &e);
@@ -1430,8 +1448,10 @@ static SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t
 		return SDL_FALSE;
 	}
 
-	*t = load_asset_tex(o, root, r, "asset");
-	if (!t) { return SDL_FALSE; }
+        if (t) {
+                *t = load_asset_tex(o, root, r, "asset");
+                if (!t) { return SDL_FALSE; }
+        }
 
 	json_t *siz;
 	siz = json_object_get(o, "frame_size");
