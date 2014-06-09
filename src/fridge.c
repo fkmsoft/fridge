@@ -61,7 +61,6 @@ typedef struct {
 
 typedef struct {
 	SDL_Texture *background;
-	SDL_Surface *collision;
 	int nlines;
 	line *l;
 } level;
@@ -202,6 +201,7 @@ static int kick_entity(entity_state *e, enum hit h);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t);
 static SDL_bool in_rect(SDL_Point const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
+static SDL_bool pt_on_line(SDL_Point const *p, line const *l);
 static enum hit intersects(line const *l, SDL_Rect const *r);
 static void entity_hitbox(entity_state const *s, SDL_Rect *box);
 
@@ -358,14 +358,19 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 
 	level = json_object_get(game, "level");
 	if (!ok) { return SDL_FALSE; }
+	path = set_path("%s/%s/%s", root, CONF_DIR, json_string_value(level));
+	json_error_t e;
+	level = json_load_file(path, 0, &e);
+	if (*e.text != 0) {
+		fprintf(stderr, "error: in %s:%d: %s\n", path, e.line, e.text);
+		return SDL_FALSE;
+	}
 
 	s->level.background = load_asset_tex(level, root, s->r, "resource");
 	if (!s->level.background) { return SDL_FALSE; }
 
-	s->level.collision = load_asset_surf(level, root, "collision-map");
-	if (!s->level.collision) { return SDL_FALSE; }
-
 	load_collisions(&s->level, level);
+	json_decref(level);
 
 	entity_rule *e_rules;
 	SDL_Texture **e_texs;
@@ -423,10 +428,6 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 	/* all texture pointers are copied by value, no need to hold onto the
 	 * e_texs buffer */
 	free(e_texs);
-
-	/* init game_state flags */
-	gs->debug.terrain_collision = SDL_CreateTextureFromSurface(s->r, s->level.collision);
-	SDL_SetTextureAlphaMod(gs->debug.terrain_collision, 100);
 
 	json_decref(game);
 
@@ -752,7 +753,7 @@ static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level c
 		h = collides_with_terrain(&r, terrain);
 		if (h != HIT_NONE) { break; }
 		if (grav && !stands_on_terrain(&r, terrain)) {
-			//break; // TODO or kick
+			break; // TODO or kick
 			r.y += 1;
 			h = collides_with_terrain(&r, terrain);
 			kick_entity(e, h);
@@ -804,9 +805,15 @@ static int entity_jump(entity_state *e, level const *terrain)
 static int entity_fall(entity_state *e, level const *terrain, SDL_bool walk)
 {
 	e->fall_time += 1;
+	SDL_Point v, w;
+	v = (SDL_Point) { x: 0, y: 1 };
+	w = entity_vector_move(e, &v, terrain, SDL_FALSE);
+	if (v.y != w.y) { e->fall_time = 0; return 0; }
+
 	entity_rule const *r = e->rule;
-	SDL_Point v = { x: walk ? e->dir * r->walk_dist : 0, y: r->fall_dist + e->fall_time };
-	SDL_Point w = entity_vector_move(e, &v, terrain, SDL_FALSE);
+	v = (SDL_Point) { x: walk ? e->dir * r->walk_dist : 0,
+	                  y: r->fall_dist + e->fall_time };
+	w = entity_vector_move(e, &v, terrain, SDL_FALSE);
 	if (v.y != w.y) { e->fall_time = 0; }
 	return w.y;
 }
@@ -818,7 +825,6 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 
 	hang_hit(HIT_NONE);
 
-	if (ev->move_jump) { puts("jump"); }
 	switch (st_begin) {
 	case ST_IDLE:
 	case ST_WALK:
@@ -838,6 +844,15 @@ static void move_entity(entity_state *e, entity_event const *ev, level const *lv
 	case ST_FALL:
 		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
 		mlog.fallen = entity_fall(e, lvl, ev->walk);
+		SDL_Rect h;
+		entity_hitbox(e, &h);
+		if (mlog.fallen == 0 && !stands_on_terrain(&h, lvl)) {
+			h.y += 1;
+			enum hit where = collides_with_terrain(&h, lvl);
+			puts("unstick");
+			print_hit(where);
+			kick_entity(e, where);
+		}
 		break;
 	case NSTATES:
 		break;
@@ -959,17 +974,7 @@ static void clear_debug(debug_state *d)
 /* collisions */
 static enum hit collides_with_terrain(SDL_Rect const *r, level const *t)
 {
-	int x = r->x;
-	int y = r->y;
-	int h = r->h - 1;
-
 	enum hit a = HIT_NONE;
-
-	SDL_Surface const *m = t->collision;
-	a |= getpixel(m, x,        y    ) == 0 ? (HIT_TOP | HIT_LEFT ) : 0;
-	a |= getpixel(m, x + r->w, y    ) == 0 ? (HIT_TOP | HIT_RIGHT) : 0;
-	a |= getpixel(m, x,        y + h) == 0 ? (HIT_BOT | HIT_LEFT ) : 0;
-	a |= getpixel(m, x + r->w, y + h) == 0 ? (HIT_BOT | HIT_RIGHT) : 0;
 
 	SDL_Rect top = { x: r->x, y: r->y, w: r->w, h: r->h / 2 };
 	SDL_Rect bot = { x: r->x, y: r->y + r->h / 2, w: r->w, h: r->h / 2 - 1 };
@@ -1006,9 +1011,14 @@ static int kick_entity(entity_state *e, enum hit h)
 
 static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t)
 {
-	int x = r->x + r->w / 2;
+	SDL_Point mid = { x: r->x + r->w / 2, y: r->y + r->h };
 
-	return getpixel(t->collision, x, r->y + r->h) == 0;
+	int i;
+	for (i = 0; i < t->nlines; i++) {
+		if (pt_on_line(&mid, &t->l[i])) { return SDL_TRUE; }
+	}
+
+	return SDL_FALSE;
 }
 
 #define between(x, y1, y2) (x >= y1 && x <= y2)
@@ -1034,25 +1044,43 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 	       (between(tp1, tp2, bt2) || between(bt1, tp2, bt2) || between(tp2, tp1, bt1) || between(bt2, tp1, bt1));
 }
 
+static SDL_bool pt_on_line(SDL_Point const *p, line const *l)
+{
+	return between(p->x, l->a.x, l->b.x) && between(p->y, l->a.y, l->b.y);
+}
+
 static enum hit intersects(line const *l, SDL_Rect const *r)
 {
+	int rx1 = r->x;
+	int rxm = r->x + r->w / 2;
+	int rx2 = r->x + r->w;
+	int ry1 = r->y;
+	int ry2 = r->y + r->h;
+
 	if (l->a.x == l->b.x) {
-		int rx1 = r->x;
-		int rxm = r->x + r->w / 2;
-		int rx2 = r->x + r->w;
-		int ry1 = r->y;
-		int ry2 = r->y + r->h;
-		if (between(l->a.x, rx1, rxm) && (between(ry1, l->a.y, l->b.y) ||
-		                    (between(ry2, l->a.y, l->b.y)))) {
+		if (between(l->a.x, rx1, rxm) &&
+			(between(ry1, l->a.y, l->b.y) || (between(ry2, l->a.y, l->b.y)) ||
+			 between(l->a.y, ry1, ry2) || between(l->b.y, ry1, ry2))) {
 			return HIT_LEFT;
 		}
 
-		if (between(l->a.x, rxm, rx2) && (between(ry1, l->a.y, l->b.y) ||
-		                    (between(ry2, l->a.y, l->b.y)))) {
+		if (between(l->a.x, rxm, rx2) &&
+			(between(ry1, l->a.y, l->b.y) || (between(ry2, l->a.y, l->b.y)) ||
+			 between(l->a.y, ry1, ry2) || between(l->b.y, ry1, ry2))) {
 			return HIT_RIGHT;
 		}
 	} else if (l->a.y == l->b.y) {
-		// TODO
+		if (between(l->a.y, ry1, ry2) &&
+			(between(rx1, l->a.x, l->b.x) || (between(rxm, l->a.x, l->b.x)) ||
+			 between(l->a.x, rx1, rxm) || between(l->b.x, rx1, rxm))) {
+			return HIT_LEFT;
+		}
+
+		if (between(l->a.y, ry1, ry2) &&
+			(between(rxm, l->a.x, l->b.x) || (between(rx2, l->a.x, l->b.x)) ||
+			 between(l->a.x, rx1, rx2) || between(l->b.x, rx1, rx2))) {
+			return HIT_RIGHT;
+		}
 	} else {
 		// TODO
 	}
@@ -1454,6 +1482,7 @@ static void load_anim(json_t *src, char const *name, char const *key, animation_
 
 static unsigned getpixel(SDL_Surface const *s, int x, int y)
 {
+	return 1;
 	int bpp = s->format->BytesPerPixel;
 	unsigned char *p = (unsigned char *)s->pixels + y * s->pitch + x * bpp;
 
