@@ -1,4 +1,4 @@
-{ "resource":        "level1_bg.gif",
+{ "resource":        "level1_bg.tga",
   "collision-lines":
     [[700, 787, 700, 805],
 
