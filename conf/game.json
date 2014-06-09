@@ -19,7 +19,7 @@
                             "walk-dist": 2            },
                 "ghost":  { "resource": "ghost.json",
                             "walk-dist": 2            },
-                "player": { "resource": "player.json",
+                "player": { "resource": "player2.json",
                             "walk-dist": 5,
                             "jump-dist-y": 7,
                             "jump-dist-x": 9,
