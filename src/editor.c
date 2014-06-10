@@ -1,5 +1,12 @@
 #include <stdio.h>
 
+#ifdef WIN32
+# include <malloc.h>
+# define alloca _alloca
+#else
+# include <alloca.h>
+#endif
+
 #include <SDL.h>
 #include <SDL_ttf.h>
 
