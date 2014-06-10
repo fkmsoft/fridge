@@ -1,9 +1,12 @@
 CFLAGS = -Wall -g -std=c99
 
-all: json_test fridge
+targets := json_test fridge editor
+objects := engine.o
+
+all: json_test fridge editor
 
 clean:
-	$(RM) json_test.exe fridge.exe
+	$(RM) json_test.exe fridge.exe editor.exe
 
 json_test: LOADLIBES = -LC:\MinGW\msys\1.0\local\lib
 json_test: LDLIBS = -ljansson
@@ -20,4 +23,22 @@ fridge: CFLAGS += -Ic:\MinGW\msys\1.0\local\include \
 	-IG:\Github\fridge\lib\SDL2_image-2.0.0\x86_64-w64-mingw32\include\SDL2 \
 	-IG:\Github\fridge\lib\SDL2_ttf-2.0.12\i686-w64-mingw32\include\SDL2 \
 	-DSDL_MAIN_HANDLED -static
-fridge: fridge.c
+fridge: fridge.c engine.o
+
+editor: LOADLIBES = -LC:\MinGW\msys\1.0\local\lib \
+	-LG:\Github\fridge\lib\SDL2-2.0.3\i686-w64-mingw32\lib \
+	-LG:\Github\fridge\lib\SDL2_image-2.0.0\i686-w64-mingw32\lib \
+	-LG:\Github\fridge\lib\SDL2_ttf-2.0.12\i686-w64-mingw32\lib
+editor: LDLIBS = -ljansson -lSDL2_image -lSDL2 -lSDL2_ttf -lfreetype -lm -ldinput8 -ldxguid -ldxerr8 -luser32 -lgdi32 -lwinmm -limm32 -lole32 -loleaut32 -lshell32 -lversion -luuid -static-libgcc
+editor: CFLAGS += -Ic:\MinGW\msys\1.0\local\include \
+	-IG:\Github\fridge\lib\SDL2-2.0.3\include \
+	-IG:\Github\fridge\lib\SDL2_image-2.0.0\x86_64-w64-mingw32\include\SDL2 \
+	-IG:\Github\fridge\lib\SDL2_ttf-2.0.12\i686-w64-mingw32\include\SDL2 \
+	-DSDL_MAIN_HANDLED -static
+editor: editor.c engine.o
+
+editor.o: CFLAGS += -Ic:\MinGW\msys\1.0\local\include \
+	-IG:\Github\fridge\lib\SDL2-2.0.3\include \
+	-IG:\Github\fridge\lib\SDL2_image-2.0.0\x86_64-w64-mingw32\include\SDL2 \
+	-IG:\Github\fridge\lib\SDL2_ttf-2.0.12\i686-w64-mingw32\include\SDL2 \
+	-DSDL_MAIN_HANDLED -static
