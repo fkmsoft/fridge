@@ -46,6 +46,7 @@ typedef struct {
 } finish;
 
 typedef struct {
+	SDL_Window *w;
 	SDL_Renderer *r;
 	level level;
 	msg_info msg;
@@ -161,6 +162,22 @@ int main(void) {
 		SDL_Delay(TICK / 4);
 	}
 
+	int i;
+	for (i = 0; i < NGROUPS; i++) {
+		free(gs.entities[i].e);
+	}
+
+	free(s.level.l);
+	SDL_DestroyTexture(s.level.background);
+
+	if (gs.debug.font) {
+		TTF_CloseFont(gs.debug.font);
+	};
+
+	free(s.msg.msgs);
+
+	SDL_DestroyRenderer(s.r);
+	SDL_DestroyWindow(s.w);
 	SDL_Quit();
 
 	return 0;
@@ -169,7 +186,6 @@ int main(void) {
 /* high level init */
 static SDL_bool init_game(session *s, game_state *gs, char const *root)
 {
-	SDL_Window *window;
 	int i;
 	json_t *game, *res;
 
@@ -198,8 +214,8 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 		return SDL_FALSE;
 	}
 
-	window = SDL_CreateWindow("Fridge Filler", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, s->screen.x, s->screen.y, 0);
-	if (!window) {
+	s->w = SDL_CreateWindow("Fridge Filler", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, s->screen.x, s->screen.y, 0);
+	if (!s->w) {
 		fprintf(stderr, "Could not init video: %s\n", SDL_GetError());
 		return SDL_FALSE;
 	}
@@ -208,11 +224,11 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 	SDL_Surface *ico = IMG_Load(path);
 	if (ico) {
 		puts("have icon");
-		SDL_SetWindowIcon(window, ico);
+		SDL_SetWindowIcon(s->w, ico);
 		SDL_FreeSurface(ico);
 	}
 
-	s->r = SDL_CreateRenderer(window, -1, 0);
+	s->r = SDL_CreateRenderer(s->w, -1, 0);
 
 	gs->debug.font = 0;
 	SDL_bool ok = load_config(s, gs, game, root);

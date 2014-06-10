@@ -109,13 +109,13 @@ static void update_state(editor_action const *a, editor_state *s)
 		}
 	}
 
-	level lv = { l: 0, background: 0, nlines: json_array_size(s->platforms) };
-	lv.l = alloca(sizeof(line) * lv.nlines);
-	static_level(s->platforms, &lv);
-
 	unsigned ticks = SDL_GetTicks();
 	if (ticks - s->ticks >= TICK) {
 		s->ticks = ticks;
+
+		level lv = { l: 0, background: 0, nlines: json_array_size(s->platforms) };
+		lv.l = alloca(sizeof(line) * lv.nlines);
+		static_level(s->platforms, &lv);
 
 		move_log log;
 		move_entity(&s->player, &a->player, &lv, &log);
@@ -235,7 +235,7 @@ static void render(SDL_Renderer *r, editor_state const *s)
 	SDL_RenderPresent(r);
 }
 
-static SDL_Renderer *init()
+static SDL_Renderer *init(SDL_Window **w)
 {
 	int err = SDL_Init(SDL_INIT_VIDEO);
 	if (err < 0) {
@@ -243,9 +243,8 @@ static SDL_Renderer *init()
 		return 0;
 	}
 
-	SDL_Window *w;
-	w = SDL_CreateWindow("Fridge Editor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 640, 480, SDL_WINDOW_RESIZABLE);
-	if (!w) {
+	*w = SDL_CreateWindow("Fridge Editor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 640, 480, SDL_WINDOW_RESIZABLE);
+	if (!*w) {
 		fprintf(stderr, "Could not init video: %s\n", SDL_GetError());
 		return 0;
 	}
@@ -253,11 +252,11 @@ static SDL_Renderer *init()
 	SDL_Surface *ico = IMG_Load("../icon.gif");
 	if (ico) {
 		puts("have icon");
-		SDL_SetWindowIcon(w, ico);
+		SDL_SetWindowIcon(*w, ico);
 		SDL_FreeSurface(ico);
 	}
 
-	return SDL_CreateRenderer(w, -1, 0);
+	return SDL_CreateRenderer(*w, -1, 0);
 }
 
 static SDL_Surface *load_tile_info(char const *res, tile *t)
@@ -295,8 +294,11 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend)
 	st->platforms = json_array();
 
 	st->floor.main = SDL_CreateTextureFromSurface(rend, srf);
+	SDL_FreeSurface(srf);
+
 	srf = IMG_Load("../level/floor_ceiling_end.tga");
 	st->floor.end = SDL_CreateTextureFromSurface(rend, srf);
+	SDL_FreeSurface(srf);
 	
 	st->player.spawn = (SDL_Rect) { x: 100, y: 100 };
 	character = json_object_get(json_object_get(conf, "entities"), "man");
@@ -304,6 +306,7 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend)
 	SDL_Texture *t;
 	ok = load_entity_resource(character, "man", &t, rend, &r, "..");
 	if (!ok) { return SDL_FALSE; }
+	json_decref(conf);
 
 	init_entity_state(&st->player, &r, t, ST_IDLE);
 
@@ -324,9 +327,10 @@ int main(void)
 {
 	int have_event;
 	SDL_Renderer *r;
+	SDL_Window *w;
 	SDL_bool ok;
 
-	r = init();
+	r = init(&w);
 	if (!r) { return 1; }
 
 	editor_action act;
@@ -352,8 +356,13 @@ int main(void)
 		SDL_Delay(TICK / 4);
 	}
 
-	SDL_Quit();
 	json_decref(st.platforms);
+	TTF_CloseFont(st.font);
+	SDL_DestroyTexture(st.floor.main);
+	SDL_DestroyTexture(st.floor.end);
+	SDL_DestroyRenderer(r);
+	SDL_DestroyWindow(w);
+	SDL_Quit();
 
 	return 0;
 }
