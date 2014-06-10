@@ -1,8 +1,9 @@
 *.swp
+/src/*.exe
+/src/*.o
 /src/fridge
-/src/frigde.exe
 /src/json_test
-/src/json_test.exe
+/src/editor
 /src/debug_font.ttf
 generate_mc_asset.bat
 /lib
