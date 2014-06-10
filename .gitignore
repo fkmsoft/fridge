@@ -3,5 +3,6 @@
 /src/frigde.exe
 /src/json_test
 /src/json_test.exe
+/src/debug_font.ttf
 generate_mc_asset.bat
 /lib

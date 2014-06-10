@@ -132,6 +132,7 @@ typedef struct {
 	SDL_bool show_terrain_collision;
 	SDL_Texture *terrain_collision;
 	SDL_bool message_positions;
+	TTF_Font *font;
 } debug_state;
 
 typedef struct {
@@ -200,6 +201,7 @@ static void clear_debug(debug_state *d);
 static enum hit collides_with_terrain(SDL_Rect const *r, level const *lev);
 static SDL_bool hang_hit(enum hit h);
 static int kick_entity(entity_state *e, enum hit h, SDL_Point const *v);
+static SDL_Point entity_feet(SDL_Rect const *r);
 static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t);
 static SDL_bool in_rect(SDL_Point const *p, SDL_Rect const *r);
 static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2);
@@ -224,6 +226,7 @@ static void load_anim(json_t *src, char const *name, char const *key, animation_
 static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
 static void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen);
 static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect const *screen);
+static void render_entity_info(SDL_Renderer *r, TTF_Font *font, entity_state const *e);
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line);
 static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
 static char const *set_path(char const *fmt, ...);
@@ -329,6 +332,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 
 	s->r = SDL_CreateRenderer(window, -1, 0);
 
+	gs->debug.font = 0;
 	SDL_bool ok = load_config(s, gs, game, root);
 	if (!ok) { return SDL_FALSE; }
 
@@ -353,12 +357,17 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 		return SDL_FALSE;
 	}
 
+	if (!gs->debug.font) {
+		gs->debug.font = TTF_OpenFont("debug_font.ttf", 14);
+	}
+
 	SDL_bool ok;
 	ok = load_finish(s, game, font, fnt_siz);
 	if (!ok) { return SDL_FALSE; }
 
 	ok = load_messages(s, game, font, fnt_siz, root);
 	if (!ok) { return SDL_FALSE; }
+	TTF_CloseFont(font);
 
 	level = json_object_get(game, "level");
 	if (!ok) { return SDL_FALSE; }
@@ -637,8 +646,8 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 	if (old_state != gs->entities[GROUP_PLAYER].e[0].st) {
 		/* print_state
-		*/
 		printf("%s -> %s\n", st_names[old_state], st_names[gs->entities[GROUP_PLAYER].e[0].st]);
+		*/
 		load_state(&gs->entities[GROUP_PLAYER].e[0]);
 	}
 
@@ -695,10 +704,9 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 
 	entity_hitbox(&gs->entities[GROUP_PLAYER].e[0], &r);
 	if (in_rect(&s->finish.pos,  &r)) {
-		if (gs->need_to_collect == 0) {
+		if (gs->need_to_collect <= 0) {
 			gs->msg = &s->finish.win;
 		} else {
-			printf("need to collect: %d\n", gs->need_to_collect);
 			gs->msg = &s->finish.loss;
 		}
 	}
@@ -961,6 +969,9 @@ static void render(session const *s, game_state const *gs)
 		}
 
 		draw_entity(s->r, &screen, &gs->entities[GROUP_PLAYER].e[0], &gs->debug);
+		if (gs->debug.active) {
+			render_entity_info(s->r, gs->debug.font, &gs->entities[GROUP_PLAYER].e[0]);
+		}
 
 		if (gs->msg) {
 			draw_message(s->r, s->msg.tex, gs->msg, &s->msg.box, &s->msg.line);
@@ -1046,9 +1057,14 @@ static int kick_entity(entity_state *e, enum hit h, SDL_Point const *v)
 	return 0;
 }
 
+static SDL_Point entity_feet(SDL_Rect const *r)
+{
+	return (SDL_Point) { x: r->x + r->w / 2, y: r->y + r->h };
+}
+
 static SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t)
 {
-	SDL_Point mid = { x: r->x + r->w / 2, y: r->y + r->h };
+	SDL_Point mid = entity_feet(r);
 
 	int i;
 	for (i = 0; i < t->nlines; i++) {
@@ -1164,7 +1180,7 @@ static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *sc
 
 static void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen)
 {
-	SDL_SetRenderDrawColor(r, 200, 20, 7, 255);
+	SDL_SetRenderDrawColor(r, 200, 20, 7, 255); /* red */
 	int i;
 	for (i = 0; i < lev->nlines; i++) {
 		SDL_RenderDrawLine(r,
@@ -1204,6 +1220,49 @@ static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect c
 	}
 }
 
+static void render_line(SDL_Renderer *r, char const *s, TTF_Font *font, int l)
+{
+	if (!font) { return; }
+
+	SDL_Surface *text;
+	SDL_Texture *tex;
+
+	SDL_Color col = {200, 20, 7, 255}; /* red */
+	text = TTF_RenderText_Blended(font, s, col);
+	tex = SDL_CreateTextureFromSurface(r, text);
+	SDL_FreeSurface(text);
+	SDL_Rect dest = { x: 0, y: l * text->h, w: text->w, h: text->h };
+	SDL_SetRenderDrawColor(r, 0, 0, 0, 180);
+	SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+	SDL_RenderFillRect(r, &dest);
+	SDL_RenderCopy(r, tex, 0, &dest);
+}
+
+static void render_entity_info(SDL_Renderer *r, TTF_Font *font, entity_state const *e)
+{
+	char const *s;
+	s = set_path("pos:  %04d %04d, state: %s", e->pos.x, e->pos.y, st_names[e->st]);
+	int l = 0;
+	render_line(r, s, font, l++);
+
+	SDL_Rect hb;
+	entity_hitbox(e, &hb);
+
+	SDL_Point ft = entity_feet(&hb);
+	s = set_path("feet: %04d %04d", ft.x, ft.y);
+	render_line(r, s, font, l++);
+
+	if (e->fall_time > 0) {
+		s = set_path("fall time: %03d", e->fall_time);
+		render_line(r, s, font, l++);
+	}
+
+	if (e->jump_timeout > 0) {
+		s = set_path("jump timeout: %03d", e->jump_timeout);
+		render_line(r, s, font, l++);
+	}
+}
+
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line)
 {
 	SDL_RenderCopy(r, t, 0, box);
@@ -1234,7 +1293,7 @@ static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 	if (debug && debug->active) {
 
 		if (debug->frames) {
-			SDL_SetRenderDrawColor(r, 255, 105, 180, 255);
+			SDL_SetRenderDrawColor(r, 255, 105, 180, 255); /* pink */
 			SDL_RenderDrawRect(r, &dst);
 		}
 
@@ -1243,7 +1302,7 @@ static void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const
 			entity_hitbox(s, &box);
 			box.x -= scr->x;
 			box.y -= scr->y;
-			SDL_SetRenderDrawColor(r, 23, 225, 38, 255);
+			SDL_SetRenderDrawColor(r, 23, 225, 38, 255); /* lime */
 			SDL_RenderDrawRect(r, &box);
 		}
 	}
