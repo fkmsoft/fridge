@@ -1,5 +1,7 @@
 #include "engine.h"
 
+static int entity_jump(entity_state *e, level const *terrain, SDL_bool walk, SDL_bool jump);
+
 /* loading */
 void load_anim(json_t *src, char const *name, char const *key, animation_rule *a)
 {
@@ -139,6 +141,14 @@ void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, 
 }
 
 /* state updates */
+void clear_order(entity_event *o)
+{
+	o->move_left = SDL_FALSE;
+	o->move_right = SDL_FALSE;
+	o->move_jump = SDL_FALSE;
+	o->walk = SDL_FALSE;
+}
+
 void tick_animation(entity_state *es)
 {
 	animation_state *as = &es->anim;
@@ -153,7 +163,204 @@ void tick_animation(entity_state *es)
 	}
 }
 
+int kick_entity(entity_state *e, enum hit h, SDL_Point const *v)
+{
+	if (h == HIT_NONE || h & HIT_TOP) { return 0; }
+	if ((h & HIT_RIGHT && h & HIT_LEFT)) { return 0; }
+
+	e->pos.x += v->x * (h & HIT_RIGHT ? -1 : 1);
+	e->pos.y += v->y;
+
+	return 0;
+}
+
+/* movement */
+static SDL_Point entity_vector_move(entity_state *e, SDL_Point const *v, level const *terrain, SDL_bool grav)
+{
+	SDL_Rect r, n;
+	entity_hitbox(e, &r);
+	entity_hitbox(e, &n);
+
+	int dirx = v->x < 0 ? -1 : 1;
+	int diry = v->y < 0 ? -1 : 1;
+
+	int vx = v->x < 0 ? -v->x : v->x;
+	int vy = v->y < 0 ? -v->y : v->y;
+
+	int v_max = vx > vy ? vx : vy;
+	int i;
+	SDL_Point out = { x: 0, y: 0 };
+	enum hit h;
+
+	for (i = 1; i < v_max + 1; i++) {
+		int dx = dirx * (i * vx) / v_max;
+		int dy = diry * (i * vy) / v_max;
+		r.x = n.x + dx;
+		r.y = n.y + dy;
+		h = collides_with_terrain(&r, terrain);
+		if (h != HIT_NONE) { break; }
+		if (grav && !stands_on_terrain(&r, terrain)) {
+			break; // or kick
+			r.y += 1;
+			h = collides_with_terrain(&r, terrain);
+			SDL_Point v = { .x = e->hitbox.w / 2, .y = e->hitbox.h / 5 };
+			kick_entity(e, h, &v);
+		}
+		out.x = dx;
+		out.y = dy;
+	}
+
+	e->pos.x += out.x;
+	e->pos.y += out.y;
+
+	return out;
+}
+
+static int entity_walk(entity_state *e, level const *terrain)
+{
+	SDL_Point v = { x: e->dir * e->rule->walk_dist, y: 0 };
+	SDL_Point r = entity_vector_move(e, &v, terrain, e->rule->has_gravity);
+	return r.x < 0 ? -r.x : r.x;
+}
+
+static int entity_start_jump(entity_state *e, level const *terrain, enum jump_type t)
+{
+	e->jump_timeout = e->rule->jump_time;
+	e->jump_type = t;
+
+	return entity_jump(e, terrain, t == JUMP_WIDE, SDL_TRUE);
+}
+
+static int entity_jump(entity_state *e, level const *terrain, SDL_bool walk, SDL_bool jump)
+{
+	entity_rule const *r = e->rule;
+	if (e->jump_timeout == 0) {
+		return r->has_gravity ? 0 : jump ? entity_start_jump(e, terrain, JUMP_HIGH) : 0;
+	}
+
+	SDL_Point v = { x: e->jump_type == JUMP_WIDE ? e->dir * r->jump_dist_x : r->has_gravity ? 0 : walk ? e->dir * r->walk_dist : 0,
+	                y: r->jump_dist_y };
+	if (r->has_gravity) { v.y += e->jump_timeout; }
+	v.y *= -1;
+	SDL_Point w = entity_vector_move(e, &v, terrain, SDL_FALSE);
+	if (w.y != v.y) {
+		e->jump_timeout = 0;
+	} else {
+		e->jump_timeout -= 1;
+	}
+	return -w.y;
+}
+
+static int entity_fall(entity_state *e, level const *terrain, SDL_bool walk)
+{
+	e->fall_time += 1;
+	SDL_Point v, w;
+	if (e->rule->has_gravity) {
+		v = (SDL_Point) { x: 0, y: 1 };
+		w = entity_vector_move(e, &v, terrain, SDL_FALSE);
+		if (v.y != w.y) { e->fall_time = 0; return 0; }
+	}
+
+	entity_rule const *r = e->rule;
+	v = (SDL_Point) { x: walk ? e->dir * r->walk_dist : 0,
+	                  y: r->fall_dist };
+	if (r->has_gravity) { v.y += e->fall_time; }
+	w = entity_vector_move(e, &v, terrain, SDL_FALSE);
+	if (v.y != w.y) { e->fall_time = 0; }
+	return w.y;
+}
+
+void keystate_to_movement(unsigned char const *ks, entity_event *e)
+{
+	if (ks[SDL_SCANCODE_LEFT ]) { e->move_left  = SDL_TRUE; e->walk = SDL_TRUE; }
+	if (ks[SDL_SCANCODE_RIGHT]) { e->move_right = SDL_TRUE; e->walk = SDL_TRUE; }
+	if (ks[SDL_SCANCODE_SPACE]) { e->move_jump = SDL_TRUE; }
+}
+
+void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move_log *mlog)
+{
+	enum state st_begin = e->st;
+	*mlog = (move_log) { walked: 0, jumped: 0, fallen: 0, turned: SDL_FALSE, hang: SDL_FALSE };
+
+	switch (st_begin) {
+	case ST_IDLE:
+	case ST_WALK:
+		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
+		if (ev->move_jump) {
+			mlog->jumped = entity_start_jump(e, lvl, ev->walk ? e->rule->has_gravity ? JUMP_WIDE : JUMP_HIGH : JUMP_HIGH);
+		} else if (ev->walk) {
+			mlog->walked = entity_walk(e, lvl);
+		}
+		break;
+	case ST_HANG:
+		break;
+	case ST_JUMP:
+		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
+		mlog->jumped = entity_jump(e, lvl, ev->walk, ev->move_jump);
+		break;
+	case ST_FALL:
+		e->dir = ev->move_left ? DIR_LEFT : ev->move_right ? DIR_RIGHT : e->dir;
+		if (!e->rule->has_gravity) {
+			if (ev->move_jump) {
+				mlog->jumped = entity_start_jump(e, lvl, JUMP_HIGH);
+			} else if (ev->walk) {
+				mlog->walked = entity_walk(e, lvl);
+				mlog->fallen = entity_fall(e, lvl, SDL_FALSE);
+			} else {
+				mlog->fallen = entity_fall(e, lvl, SDL_FALSE);
+			}
+		} else {
+			mlog->fallen = entity_fall(e, lvl, ev->walk);
+			SDL_Rect h;
+			entity_hitbox(e, &h);
+			if (mlog->fallen == 0 && !stands_on_terrain(&h, lvl)) {
+				h.y += 1;
+				enum hit where = collides_with_terrain(&h, lvl);
+				SDL_Point v = { .x = -1, .y = 0 };
+				kick_entity(e, where, &v);
+			}
+		}
+		break;
+	case NSTATES:
+		break;
+	}
+
+	SDL_Rect h;
+	entity_hitbox(e, &h);
+	e->st = mlog->jumped > 0 ? ST_JUMP : stands_on_terrain(&h, lvl) ? mlog->walked > 0 ? ST_WALK : ST_IDLE : ST_FALL;
+}
+
 /* collision */
+enum hit collides_with_terrain(SDL_Rect const *r, level const *t)
+{
+	enum hit a = HIT_NONE;
+
+	SDL_Rect top = { x: r->x, y: r->y, w: r->w, h: r->h / 2 };
+	SDL_Rect bot = { x: r->x, y: r->y + r->h / 2, w: r->w, h: r->h / 2 - 1 };
+	int i;
+	for (i = 0; i < t->nlines; i++) {
+		enum hit ht, hb;
+		ht = intersects(&t->l[i], &top);
+		hb = intersects(&t->l[i], &bot);
+		if (ht != HIT_NONE) { a |= (ht | HIT_TOP); }
+		if (hb != HIT_NONE) { a |= (hb | HIT_BOT); }
+	}
+
+	return a;
+}
+
+SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t)
+{
+	SDL_Point mid = entity_feet(r);
+
+	int i;
+	for (i = 0; i < t->nlines; i++) {
+		if (pt_on_line(&mid, &t->l[i])) { return SDL_TRUE; }
+	}
+
+	return SDL_FALSE;
+}
+
 void entity_hitbox(entity_state const *s, SDL_Rect *box)
 {
 	*box = (SDL_Rect) { x: s->pos.x,
@@ -175,7 +382,64 @@ SDL_Point entity_feet(SDL_Rect const *r)
 	return (SDL_Point) { x: r->x + r->w / 2, y: r->y + r->h };
 }
 
+SDL_bool pt_on_line(SDL_Point const *p, line const *l)
+{
+	return between(p->x, l->a.x, l->b.x) && between(p->y, l->a.y, l->b.y);
+}
+
+enum hit intersects(line const *l, SDL_Rect const *r)
+{
+	int rx1 = r->x;
+	int rxm = r->x + r->w / 2;
+	int rx2 = r->x + r->w;
+	int ry1 = r->y;
+	int ry2 = r->y + r->h;
+
+	if (l->a.x == l->b.x) {
+		if (between(l->a.x, rx1, rxm) &&
+			(between(ry1, l->a.y, l->b.y) || (between(ry2, l->a.y, l->b.y)) ||
+			 between(l->a.y, ry1, ry2) || between(l->b.y, ry1, ry2))) {
+			return HIT_LEFT;
+		}
+
+		if (between(l->a.x, rxm, rx2) &&
+			(between(ry1, l->a.y, l->b.y) || (between(ry2, l->a.y, l->b.y)) ||
+			 between(l->a.y, ry1, ry2) || between(l->b.y, ry1, ry2))) {
+			return HIT_RIGHT;
+		}
+	} else if (l->a.y == l->b.y) {
+		if (between(l->a.y, ry1, ry2) &&
+			(between(rx1, l->a.x, l->b.x) || (between(rxm, l->a.x, l->b.x)) ||
+			 between(l->a.x, rx1, rxm) || between(l->b.x, rx1, rxm))) {
+			return HIT_LEFT;
+		}
+
+		if (between(l->a.y, ry1, ry2) &&
+			(between(rxm, l->a.x, l->b.x) || (between(rx2, l->a.x, l->b.x)) ||
+			 between(l->a.x, rx1, rx2) || between(l->b.x, rx1, rx2))) {
+			return HIT_RIGHT;
+		}
+	} else {
+		// TODO
+	}
+
+	return HIT_NONE;
+}
+
 /* rendering */
+void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen)
+{
+	SDL_SetRenderDrawColor(r, 200, 20, 7, 255); /* red */
+	int i;
+	for (i = 0; i < lev->nlines; i++) {
+		SDL_RenderDrawLine(r,
+				   lev->l[i].a.x - screen->x,
+				   lev->l[i].a.y - screen->y,
+				   lev->l[i].b.x - screen->x,
+				   lev->l[i].b.y - screen->y);
+	}
+}
+
 void render_line(SDL_Renderer *r, char const *s, TTF_Font *font, int l)
 {
 	if (!font) { return; }

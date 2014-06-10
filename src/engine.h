@@ -11,10 +11,23 @@
 #define ASSET_DIR "assets"
 
 #define streq(s1, s2) !strcmp(s1, s2)
+#define between(x, y1, y2) (x >= y1 && x <= y2)
 
 enum dir { DIR_LEFT = -1, DIR_RIGHT = 1 };
+enum hit { HIT_NONE = 0, HIT_TOP = 1, HIT_LEFT = 1 << 1, HIT_RIGHT = 1 << 2, HIT_BOT = 1 << 3 };
 enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, ST_HANG, NSTATES };
 static char const * const st_names[] = { "idle", "walk", "fall", "jump", "hang" };
+
+typedef struct {
+	SDL_Point a;
+	SDL_Point b;
+} line;
+
+typedef struct {
+	SDL_Texture *background;
+	int nlines;
+	line *l;
+} level;
 
 typedef struct {
 	unsigned len;
@@ -60,6 +73,21 @@ typedef struct {
 } entity_state;
 
 typedef struct {
+	SDL_bool walk;
+	SDL_bool move_left;
+	SDL_bool move_right;
+	SDL_bool move_jump;
+} entity_event;
+
+typedef struct {
+	int walked;
+	int jumped;
+	int fallen;
+	SDL_bool turned;
+	SDL_bool hang;
+} move_log;
+
+typedef struct {
 	SDL_bool active;
 	SDL_bool frames;
 	SDL_bool hitboxes;
@@ -79,13 +107,24 @@ void load_state(entity_state *es);
 void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st);
 
 /* state updates */
+void clear_order(entity_event *o);
 void tick_animation(entity_state *as);
+int kick_entity(entity_state *e, enum hit h, SDL_Point const *v);
+
+/* movement */
+void keystate_to_movement(unsigned char const *ks, entity_event *e);
+void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move_log *mlog);
 
 /* collision */
+enum hit collides_with_terrain(SDL_Rect const *r, level const *lev);
+SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t);
 void entity_hitbox(entity_state const *s, SDL_Rect *box);
 SDL_Point entity_feet(SDL_Rect const *r);
+SDL_bool pt_on_line(SDL_Point const *p, line const *l);
+enum hit intersects(line const *l, SDL_Rect const *r);
 
 /* rendering */
+void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen);
 void render_line(SDL_Renderer *r, char const *s, TTF_Font *font, int l);
 void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
 
