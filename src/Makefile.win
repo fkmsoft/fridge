@@ -34,7 +34,7 @@ editor: CFLAGS += -Ic:\MinGW\msys\1.0\local\include \
 	-IG:\Github\fridge\lib\SDL2-2.0.3\include \
 	-IG:\Github\fridge\lib\SDL2_image-2.0.0\x86_64-w64-mingw32\include\SDL2 \
 	-IG:\Github\fridge\lib\SDL2_ttf-2.0.12\i686-w64-mingw32\include\SDL2 \
-	-DSDL_MAIN_HANDLED -static
+	-DSDL_MAIN_HANDLED -static -DWIN32
 editor: editor.c engine.o
 
 editor.o: CFLAGS += -Ic:\MinGW\msys\1.0\local\include \
