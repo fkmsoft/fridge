@@ -38,6 +38,7 @@ typedef struct {
 	tile floor;
 	tile platf;
 	tile wall;
+	tile ceil;
 	unsigned ticks;
 	entity_state player;
 	json_t *platforms;
@@ -67,6 +68,16 @@ static void add_floor(json_t *lvl, SDL_Rect const *p)
 	json_array_append_new(a, json_integer(p->y));
 	json_array_append_new(a, json_integer(1));
 	json_array_append_new(lvl, a);
+
+	if (p->h != 0) {
+		a = json_array();
+		json_array_append_new(a, json_integer(p->x));
+		json_array_append_new(a, json_integer(p->y + p->h));
+		json_array_append_new(a, json_integer(p->x + p->w));
+		json_array_append_new(a, json_integer(p->y + p->h));
+		json_array_append_new(a, json_integer(-1));
+		json_array_append_new(lvl, a);
+	}
 }
 
 static void static_level(json_t *platforms, json_t *rooms, level *stat)
@@ -134,6 +145,7 @@ static void update_state(editor_action const *a, editor_state *s)
 			s->selecting = SDL_FALSE;
 			if (s->selection.h <= s->platf.box.h) {
 				s->selection.w = s->platf.box.w * (s->selection.w / s->platf.box.w);
+				s->selection.h = 0;
 				add_floor(s->platforms, &s->selection);
 			} else {
 				s->selection.w = s->floor.box.w * (s->selection.w / s->floor.box.w);
@@ -203,7 +215,7 @@ void clear_action(editor_action *a)
 
 static void draw_tile(SDL_Renderer *r, tile const *t, SDL_Point const *pos, SDL_bool end, SDL_bool flip)
 {
-	SDL_Rect dest = (SDL_Rect) { pos->x - (end ? 0 : t->box.x), pos->y - t->box.y, t->box.w, t->box.h };
+	SDL_Rect dest = (SDL_Rect) { pos->x - (end ? flip ? -t->box.w / 2 : 0 : t->box.x), pos->y - t->box.y, t->box.w / (end ? 2 : 1), t->box.h };
 	SDL_RenderCopyEx(r, end ? t->end : t->main, 0, &dest, 0, 0, flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
 }
 
@@ -230,13 +242,19 @@ static void draw_tiles(SDL_Renderer *rend, SDL_Rect const *r, tile const *t, SDL
 			draw_tile(rend, t, &pos, SDL_TRUE, flip_all);
 		}
 	} else {
-		end.y += t->box.h;
 		pos.y += t->box.h;
 		while (pos.y + t->box.h <= end.y) {
 			draw_tile(rend, t, &pos, SDL_FALSE, flip_all);
 			pos.y += t->box.h;
 		}
 	}
+}
+
+static void draw_platform(SDL_Renderer *r, SDL_Rect *p, tile const *t)
+{
+	p->y += 24;
+
+	draw_tiles(r, p, t, SDL_FALSE);
 }
 
 static void draw_platforms(SDL_Renderer *r, json_t const *ps, tile const *t)
@@ -249,11 +267,26 @@ static void draw_platforms(SDL_Renderer *r, json_t const *ps, tile const *t)
 			       h: 0 };
 		p.w = json_integer_value(json_array_get(m, 2)) - p.x;
 
-		draw_tiles(r, &p, t, SDL_FALSE);
+		draw_platform(r, &p, t);
 	}
 }
 
-static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, tile const *wall)
+static void draw_room(SDL_Renderer *r, SDL_Rect *room, tile const *floor, tile const *wall, tile const *ceil, SDL_bool flip)
+{
+	if (room->h == 0) {
+		room->y += 24;
+		if (!flip) {
+			draw_tiles(r, room, floor, flip);
+		} else {
+			draw_tiles(r, room, ceil, flip);
+		}
+	} else if (room->w == 0) {
+		if (!flip) { room->x += wall->box.w; }
+		draw_tiles(r, room, wall, flip);
+	}
+}
+
+static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, tile const *wall, tile const *ceil)
 {
 	int i;
 	json_t *m;
@@ -267,12 +300,7 @@ static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, til
 		p.w -= p.x == p.w ? p.w : p.x;
 		p.h -= p.y == p.h ? p.h : p.y;
 
-		if (p.h == 0) {
-			draw_tiles(r, &p, floor, d == DIR_LEFT);
-		} else if (p.w == 0) {
-			if (d == DIR_RIGHT) { p.x += wall->box.w; }
-			draw_tiles(r, &p, wall, d == DIR_LEFT);
-		}
+		draw_room(r, &p, floor, wall, ceil, d == DIR_LEFT);
 	}
 }
 
@@ -282,21 +310,23 @@ static void render(SDL_Renderer *r, editor_state const *s)
 	SDL_RenderClear(r);
 
 	draw_platforms(r, s->platforms, &s->platf);
-	draw_rooms(r, s->rooms, &s->floor, &s->wall);
+	draw_rooms(r, s->rooms, &s->floor, &s->wall, &s->ceil);
 
 	SDL_SetRenderDrawColor(r, 23, 225, 38, 255); /* lime */
 	if (s->selecting) {
 		SDL_RenderDrawRect(r, &s->selection);
 		SDL_Rect roof = { x: s->selection.x, y: s->selection.y, w: s->selection.w, h: 0 };
 		if (s->selection.h <= s->platf.box.h) {
-			draw_tiles(r, &roof, &s->platf, SDL_FALSE);
+			draw_platform(r, &roof, &s->platf);
 		} else {
-			draw_tiles(r, &roof, &s->floor, SDL_FALSE);
+			draw_room(r, &roof, &s->floor, &s->wall, &s->ceil, SDL_FALSE);
+			roof.y += s->selection.h;
+			draw_room(r, &roof, &s->floor, &s->wall, &s->ceil, SDL_FALSE);
 			roof = (SDL_Rect) { x: s->selection.x, y: s->selection.y, w: 0, h: s->selection.h };
-			roof.x += s->wall.box.w / 2;
-			draw_tiles(r, &roof, &s->wall, SDL_TRUE);
+			draw_room(r, &roof, &s->floor, &s->wall, &s->ceil, SDL_TRUE);
 			roof.x += s->selection.w;
-			draw_tiles(r, &roof, &s->wall, SDL_FALSE);
+			roof.x = s->floor.box.w * (roof.x / s->floor.box.w);
+			draw_room(r, &roof, &s->floor, &s->wall, &s->ceil, SDL_FALSE);
 		}
 	}
 
@@ -367,27 +397,38 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend)
 		return SDL_FALSE;
 	}
 
-	SDL_bool ok;
-	SDL_Surface *srf;
-	srf = load_tile_info("../level/floor_ceiling.tga", &st->platf);
-	if (!srf) { return SDL_FALSE; }
-
 	st->platforms = json_array();
 	st->rooms = json_array();
+
+	SDL_bool ok;
+	SDL_Surface *srf;
+	srf = load_tile_info("../level/floor_ceiling_48x24.tga", &st->platf);
+	if (!srf) { return SDL_FALSE; }
 
 	st->platf.main = SDL_CreateTextureFromSurface(rend, srf);
 	SDL_FreeSurface(srf);
 
-	srf = IMG_Load("../level/floor_ceiling_end.tga");
+	srf = IMG_Load("../level/floor_ceiling_end_24x24.tga");
+	if (!srf) { return SDL_FALSE; }
 	st->platf.end = SDL_CreateTextureFromSurface(rend, srf);
 	SDL_FreeSurface(srf);
 
-	srf = load_tile_info("../level/floor.tga", &st->floor);
+	srf = load_tile_info("../level/ceiling_48x24.tga", &st->ceil);
+	if (!srf) { return SDL_FALSE; }
+
+	st->ceil.main = SDL_CreateTextureFromSurface(rend, srf);
+	SDL_FreeSurface(srf);
+
+	st->ceil.end = 0;
+
+	srf = load_tile_info("../level/floor_48x24.tga", &st->floor);
+	if (!srf) { return SDL_FALSE; }
 	st->floor.main = SDL_CreateTextureFromSurface(rend, srf);
 	st->floor.end = 0;
 	SDL_FreeSurface(srf);
 
-	srf = load_tile_info("../level/wall_new.tga", &st->wall);
+	srf = load_tile_info("../level/wall_48x48.tga", &st->wall);
+	if (!srf) { return SDL_FALSE; }
 	st->wall.main = SDL_CreateTextureFromSurface(rend, srf);
 	st->wall.end = 0;
 	SDL_FreeSurface(srf);
