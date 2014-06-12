@@ -43,6 +43,7 @@ typedef struct {
 	entity_state player;
 	json_t *platforms;
 	json_t *rooms;
+	level *cached;
 } editor_state;
 
 static void add_wall(json_t *lvl, SDL_Rect const *p, enum dir d)
@@ -80,12 +81,11 @@ static void add_floor(json_t *lvl, SDL_Rect const *p)
 	}
 }
 
-static void static_level(json_t *platforms, json_t *rooms, level *stat)
+static level *static_level(json_t *platforms, json_t *rooms)
 {
-	if (stat->nlines != json_array_size(platforms) + json_array_size(rooms)) {
-		fprintf(stderr, "no space allocated for static level\n");
-		return;
-	}
+	level *l = malloc(sizeof(level));
+	l->nlines = json_array_size(platforms) + json_array_size(rooms);
+	l->l = malloc(sizeof(line) * l->nlines);
 
 	SDL_Point a, b;
 
@@ -97,7 +97,7 @@ static void static_level(json_t *platforms, json_t *rooms, level *stat)
 		b.x = json_integer_value(json_array_get(m, 2));
 		b.y = json_integer_value(json_array_get(m, 3));
 
-		stat->l[i] = (line) { a: a, b: b };
+		l->l[i] = (line) { a: a, b: b };
 	}
 
 	int k = json_array_size(platforms);
@@ -107,8 +107,16 @@ static void static_level(json_t *platforms, json_t *rooms, level *stat)
 		b.x = json_integer_value(json_array_get(m, 2));
 		b.y = json_integer_value(json_array_get(m, 3));
 
-		stat->l[i + k] = (line) { a: a, b: b };
+		l->l[i + k] = (line) { a: a, b: b };
 	}
+
+	return l;
+}
+
+static void destroy_level(level *l)
+{
+	free(l->l);
+	free(l);
 }
 
 static void update_state(editor_action const *a, editor_state *s)
@@ -154,6 +162,10 @@ static void update_state(editor_action const *a, editor_state *s)
 				add_wall(s->rooms, &s->selection, DIR_LEFT);
 				add_wall(s->rooms, &s->selection, DIR_RIGHT);
 			}
+
+			puts("level changed, updating");
+			destroy_level(s->cached);
+			s->cached = static_level(s->platforms, s->rooms);
 		}
 	}
 
@@ -161,12 +173,8 @@ static void update_state(editor_action const *a, editor_state *s)
 	if (ticks - s->ticks >= TICK) {
 		s->ticks = ticks;
 
-		level lv = { l: 0, background: 0, nlines: json_array_size(s->platforms) + json_array_size(s->rooms)};
-		lv.l = alloca(sizeof(line) * lv.nlines);
-		static_level(s->platforms, s->rooms, &lv);
-
 		move_log log;
-		move_entity(&s->player, &a->player, &lv, &log);
+		move_entity(&s->player, &a->player, s->cached, &log);
 
 		tick_animation(&s->player);
 	}
@@ -333,11 +341,7 @@ static void render(SDL_Renderer *r, editor_state const *s)
 	SDL_Rect screen = { 0, 0, 0, 0 };
 	draw_entity(r, &screen, &s->player, 0);
 
-	level lv = { l: 0, background: 0, nlines: json_array_size(s->platforms) + json_array_size(s->rooms)};
-	lv.l = alloca(sizeof(line) * lv.nlines);
-	static_level(s->platforms, s->rooms, &lv);
-
-	draw_terrain_lines(r, &lv, &screen);
+	draw_terrain_lines(r, s->cached, &screen);
 
 	int l = 0;
 	render_line(r, st_names[s->player.st], s->font, l++);
@@ -451,6 +455,8 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend)
 	SDL_Rect plat = { x: ft.x - hb.w, y: ft.y + 100, w: ft.x + hb.w, h: 0 };
 	add_floor(st->platforms, &plat);
 
+	st->cached = static_level(st->platforms, st->rooms);
+
 	st->ticks = SDL_GetTicks();
 
 	return SDL_TRUE;
@@ -469,6 +475,7 @@ static void destroy_state(editor_state const *st)
 	json_decref(st->platforms);
 	json_decref(st->rooms);
 	TTF_CloseFont(st->font);
+	destroy_level(st->cached);
 	destroy_tile(&st->wall);
 	destroy_tile(&st->floor);
 	destroy_tile(&st->platf);

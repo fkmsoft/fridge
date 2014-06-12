@@ -117,13 +117,75 @@ static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_
 static void print_hit(enum hit h);
 #endif
 
-int main(void) {
+static void print_event(FILE *fd, game_event *e)
+{
+	if (e->player.walk)       { fputs("walk\n",  fd); }
+	if (e->player.move_left)  { fputs("left\n",  fd); }
+	if (e->player.move_right) { fputs("right\n", fd); }
+	if (e->player.move_jump)  { fputs("jump\n",  fd); }
+
+	if (e->toggle_pause)   { fputs("pause\n",    fd); }
+	if (e->toggle_debug)   { fputs("debug\n",    fd); }
+	if (e->toggle_terrain) { fputs("hits\n",     fd); }
+	if (e->reload_conf)    { fputs("conf\n",   fd); }
+	if (e->exit)           { fputs("exit\n",     fd); }
+	if (e->keyboard)       { fputs("keyboard\n", fd); }
+	if (e->reset)          { fputs("spawn\n",    fd); }
+
+	fputs("tick\n", fd);
+}
+
+static void read_event(FILE *fd, game_event *e)
+{
+	char buf[MAX_PATH];
+	while (1) {
+	fgets(buf, MAX_PATH - 1, fd);
+	switch (*buf) {
+	case 'w': e->player.walk = SDL_TRUE; break;
+	case 'l': e->player.move_left = SDL_TRUE; break;
+	case 'r': e->player.move_right = SDL_TRUE; break;
+	case 'j': e->player.move_jump = SDL_TRUE; break;
+	case 'p': e->toggle_pause = SDL_TRUE; break;
+	case 'd': e->toggle_debug = SDL_TRUE; break;
+	case 'h': e->toggle_terrain = SDL_TRUE; break;
+	case 'c': e->reload_conf = SDL_TRUE; break;
+	case 'e': e->exit = SDL_TRUE; break;
+	case 'k': e->keyboard = SDL_TRUE; break;
+	case 's': e->reset = SDL_TRUE; break;
+	case 't': return;
+	default: break;
+	}
+	}
+}
+
+int main(int argc, char **argv) {
 	SDL_bool ok;
 	char const *root = getenv(ROOTVAR);
 	if (!root || !*root) {
 		fprintf(stderr, "error: environment undefined\n");
 		fprintf(stderr, "set %s to the installation directory of Fridge Filler\n", ROOTVAR);
 		return 1;
+	}
+
+	FILE *rp = 0;
+	SDL_bool rp_play = SDL_FALSE;
+	SDL_bool rp_save = SDL_FALSE;
+	if (argc > 1) {
+		if (streq(argv[1], "--save-replay") || streq(argv[1], "-s")) {
+			char const *fname = "replay.txt";
+			if (argc == 3) { fname = argv[2]; }
+			printf("saving replay to `%s'\n", fname);
+			rp = fopen(fname, "w");
+			rp_save = SDL_TRUE;
+		}
+
+		if (streq(argv[1], "--replay") || streq(argv[1], "-r")) {
+			char const *fname = "replay.txt";
+			if (argc == 3) { fname = argv[2]; }
+			printf("loading replay `%s'\n", fname);
+			rp = fopen(fname, "r");
+			rp_play = SDL_TRUE;
+		}
 	}
 
 	session s;
@@ -140,16 +202,20 @@ int main(void) {
 	int have_ev;
 	SDL_Event event;
 	while (gs.run != MODE_EXIT) {
-		have_ev = SDL_PollEvent(&event);
-		if (have_ev) {
-			process_event(&event, &ge);
-		}
+		if (!rp_play) {
+			have_ev = SDL_PollEvent(&event);
+			if (have_ev) {
+				process_event(&event, &ge);
+			}
 
-		unsigned char const *keystate = SDL_GetKeyboardState(0);
-		keystate_to_movement(keystate, &ge.player);
+			unsigned char const *keystate = SDL_GetKeyboardState(0);
+			keystate_to_movement(keystate, &ge.player);
+		}
 
 		ticks = SDL_GetTicks();
 		if (ticks - old_ticks >= TICK) {
+			if (rp_save) { print_event(rp, &ge); }
+			else if (rp_play) { read_event(rp, &ge); }
 			update_gamestate(&s, &gs, &ge);
 			clear_event(&ge);
 			/*
@@ -174,6 +240,7 @@ int main(void) {
 		TTF_CloseFont(gs.debug.font);
 	};
 
+	if (rp) { fclose(rp); }
 	free(s.msg.msgs);
 
 	SDL_DestroyRenderer(s.r);
