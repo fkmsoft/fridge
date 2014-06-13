@@ -638,7 +638,7 @@ static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 				case GROUP_PLAYER:
 					break;
 				case NGROUPS:
-					fprintf(stderr,"line %d: can never happen\n", __LINE__);
+					fprintf(stderr, "line %d: can never happen\n", __LINE__);
 				}
 			}
 		}

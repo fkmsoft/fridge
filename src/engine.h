@@ -26,8 +26,7 @@ typedef struct {
 
 typedef struct {
 	SDL_Texture *background;
-	int w;
-	int h;
+	SDL_Rect dim;
 	int nvertical;
 	int nhorizontal;
 	line *vertical;
