@@ -16,6 +16,8 @@ typedef struct {
 	SDL_Point coord;
 	SDL_Point movement;
 	entity_event player;
+	SDL_bool set_spawn;
+	SDL_bool respawn;
 	SDL_bool toggle_terrain;
 	SDL_bool toggle_pan;
 } editor_action;
@@ -161,7 +163,7 @@ static SDL_Texture *redraw_background(editor_state *s)
 	SDL_Texture *b = SDL_CreateTexture(s->r, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, s->cached->w, s->cached->h);
 	SDL_SetRenderTarget(s->r, b);
 	SDL_SetTextureBlendMode(b, SDL_BLENDMODE_BLEND);
-	SDL_SetRenderDrawColor(s->r, 100, 0, 0, 100); /* transparent */
+	SDL_SetRenderDrawColor(s->r, 0, 0, 100, 100); /* transparent */
 	SDL_RenderClear(s->r);
 
 	draw_platforms(s->r, s->platforms, &s->platf);
@@ -247,6 +249,16 @@ static void update_state(editor_action const *a, editor_state *s)
 		s->mouse = a->coord;
 	}
 
+	if (a->respawn) {
+		s->player.pos.x = s->player.spawn.x;
+		s->player.pos.y = s->player.spawn.y;
+	}
+
+	if (a->set_spawn) {
+		s->player.spawn.x = s->player.pos.x;
+		s->player.spawn.y = s->player.pos.y;
+	}
+
 	if (a->start_select) {
 		s->selection.x = a->coord.x;
 		s->selection.y = a->coord.y;
@@ -294,14 +306,6 @@ static void update_state(editor_action const *a, editor_state *s)
 		}
 	}
 
-	/*
-	if (a->resized) {
-		puts("window resize, redrawing bg");
-		SDL_DestroyTexture(s->cached->background);
-		s->cached->background = redraw_background(s);
-	}
-	*/
-
 	unsigned ticks = SDL_GetTicks();
 	if (ticks - s->ticks >= TICK) {
 		s->ticks = ticks;
@@ -326,6 +330,12 @@ static void handle_event(SDL_Event const *e, editor_action *a)
 			break;
 		case SDLK_t:
 			a->toggle_terrain = SDL_TRUE;
+			break;
+		case SDLK_s:
+			a->set_spawn = SDL_TRUE;
+			break;
+		case SDLK_r:
+			a->respawn = SDL_TRUE;
 			break;
 		default:
 			break;
@@ -381,6 +391,8 @@ void clear_action(editor_action *a)
 		resized: SDL_FALSE,
 		move_mouse: SDL_FALSE,
 		toggle_terrain: SDL_FALSE,
+		set_spawn: SDL_FALSE,
+		respawn: SDL_FALSE,
 		toggle_pan: SDL_FALSE };
 	clear_order(&a->player);
 }
