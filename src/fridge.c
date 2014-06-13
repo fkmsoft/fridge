@@ -109,7 +109,6 @@ static SDL_bool load_messages(session *s, json_t *game, TTF_Font *font, int font
 static int load_collisions(level *level, json_t const *o);
 static SDL_Surface *load_asset_surf(json_t *a, char const *d, char const *k);
 static void render_message(message *ms, SDL_Renderer *r, TTF_Font *font, json_t *m, unsigned offset);
-static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
 static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect const *screen);
 static void render_entity_info(SDL_Renderer *r, TTF_Font *font, entity_state const *e);
 static void draw_message(SDL_Renderer *r, SDL_Texture *t, message const *m, SDL_Rect const *box, SDL_Rect const *line);
@@ -806,11 +805,6 @@ static SDL_bool have_collision(SDL_Rect const *r1, SDL_Rect const *r2)
 }
 
 /* low level interactions */
-static void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen)
-{
-	SDL_RenderCopy(r, bg, screen, 0);
-}
-
 static void draw_message_boxes(SDL_Renderer *r, msg_info const *msgs, SDL_Rect const *screen)
 {
 	int i;

@@ -474,6 +474,11 @@ static enum hit intersects_y(line const *l, SDL_Rect const *r)
 }
 
 /* rendering */
+void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen)
+{
+	SDL_RenderCopy(r, bg, screen, 0);
+}
+
 void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen)
 {
 	SDL_SetRenderDrawColor(r, 200, 20, 7, 255); /* red */

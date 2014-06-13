@@ -129,6 +129,7 @@ int cmp_lines(void const *x, void const *y);
 SDL_Point entity_feet(SDL_Rect const *r);
 
 /* rendering */
+void draw_background(SDL_Renderer *r, SDL_Texture *bg, SDL_Rect const *screen);
 void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen);
 void render_line(SDL_Renderer *r, char const *s, TTF_Font *font, int l);
 void draw_entity(SDL_Renderer *r, SDL_Rect const *scr, entity_state const *s, debug_state const *debug);
