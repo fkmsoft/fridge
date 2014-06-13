@@ -144,6 +144,16 @@ void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, 
 	es->fall_time = 0;
 }
 
+void clear_debug(debug_state *d)
+{
+	d->active = SDL_FALSE;
+	d->pause = SDL_FALSE;
+	d->frames = SDL_TRUE;
+	d->hitboxes = SDL_TRUE;
+	d->show_terrain_collision = SDL_FALSE;
+	d->message_positions = SDL_TRUE;
+}
+
 /* teardown */
 void destroy_level(level *l)
 {

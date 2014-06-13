@@ -14,7 +14,10 @@ typedef struct {
 	SDL_bool select;
 	SDL_bool move_mouse;
 	SDL_Point coord;
+	SDL_Point movement;
 	entity_event player;
+	SDL_bool toggle_terrain;
+	SDL_bool toggle_pan;
 } editor_action;
 
 typedef struct {
@@ -28,6 +31,8 @@ typedef struct {
 	SDL_Point mouse;
 	SDL_Rect selection;
 	SDL_bool selecting;
+	SDL_bool panning;
+	SDL_Point view;
 	TTF_Font *font;
 	tile floor;
 	tile platf;
@@ -38,6 +43,8 @@ typedef struct {
 	json_t *platforms;
 	json_t *rooms;
 	level *cached;
+	debug_state debug;
+	SDL_Texture *scenery;
 	SDL_Renderer *r;
 	SDL_Window *w;
 } editor_state;
@@ -82,8 +89,8 @@ static void draw_tiles(SDL_Renderer *rend, SDL_Rect const *r, tile const *t, SDL
 			draw_tile(rend, t, &pos, SDL_TRUE, flip_all);
 		}
 	} else {
-		pos.y += t->box.h;
-		while (pos.y + t->box.h <= end.y) {
+		pos.y += t->box.h / 2;
+		while (pos.y < end.y) {
 			draw_tile(rend, t, &pos, SDL_FALSE, flip_all);
 			pos.y += t->box.h;
 		}
@@ -92,7 +99,7 @@ static void draw_tiles(SDL_Renderer *rend, SDL_Rect const *r, tile const *t, SDL
 
 static void draw_platform(SDL_Renderer *r, SDL_Rect *p, tile const *t)
 {
-	p->y += 24;
+	p->y += t->box.h;
 
 	draw_tiles(r, p, t, SDL_FALSE);
 }
@@ -121,16 +128,18 @@ static void draw_room(SDL_Renderer *rend, SDL_Rect const *r, tile const *floor, 
 
 	lwall.x += wall->box.w / 2;
 	rwall.x += wall->box.w / 2;
-	rceil.y += ceil->box.h / 2;
-	loor.y += floor->box.h / 2;
+	lwall.y += floor->box.h;
+	rwall.y += floor->box.h;
+	rceil.y += ceil->box.h;
+	loor.y += floor->box.h;
 
 	SDL_SetRenderDrawColor(rend, 0, 0, 0, 255);
 	SDL_RenderFillRect(rend, r);
 
-	draw_tiles(rend, &loor, floor, SDL_FALSE);
-	draw_tiles(rend, &rceil, ceil, SDL_TRUE);
 	draw_tiles(rend, &rwall, wall, SDL_FALSE);
 	draw_tiles(rend, &lwall, wall, SDL_TRUE);
+	draw_tiles(rend, &rceil, ceil, SDL_TRUE);
+	draw_tiles(rend, &loor, floor, SDL_FALSE);
 }
 
 static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, tile const *wall, tile const *ceil)
@@ -149,11 +158,10 @@ static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, til
 
 static SDL_Texture *redraw_background(editor_state *s)
 {
-	int w, h;
-	SDL_GetWindowSize(s->w, &w, &h);
-	SDL_Texture *b = SDL_CreateTexture(s->r, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, w, h);
+	SDL_Texture *b = SDL_CreateTexture(s->r, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, s->cached->w, s->cached->h);
 	SDL_SetRenderTarget(s->r, b);
-	SDL_SetRenderDrawColor(s->r, 20, 40, 170, 255); /* blue */
+	SDL_SetTextureBlendMode(b, SDL_BLENDMODE_BLEND);
+	SDL_SetRenderDrawColor(s->r, 100, 0, 0, 100); /* transparent */
 	SDL_RenderClear(s->r);
 
 	draw_platforms(s->r, s->platforms, &s->platf);
@@ -163,11 +171,14 @@ static SDL_Texture *redraw_background(editor_state *s)
 	return b;
 }
 
-static level *static_level(json_t *platforms, json_t *rooms, editor_state *s)
+static level *static_level(json_t *platforms, json_t *rooms)
 {
 	level *l = malloc(sizeof(level));
 	int p = json_array_size(platforms);
 	int r = json_array_size(rooms);
+	l->w = 0;
+	l->h = 0;
+	l->background = 0;
 
 	l->horizontal = malloc(sizeof(line) * (p + 2 * r));
 	l->vertical = malloc(sizeof(line) * 2 * r);
@@ -185,6 +196,8 @@ static level *static_level(json_t *platforms, json_t *rooms, editor_state *s)
 
 		l->horizontal[l->nhorizontal] = (line) { y, x, x + w };
 		l->nhorizontal += 1;
+		if (x + w > l->w) { l->w = x + w; }
+		if (y > l->h) { l->h = y; }
 	}
 
 	json_array_foreach(rooms, i, m) {
@@ -200,13 +213,15 @@ static level *static_level(json_t *platforms, json_t *rooms, editor_state *s)
 		l->horizontal[l->nhorizontal + 0] = (line) { y, x, x + w };
 		l->horizontal[l->nhorizontal + 1] = (line) { y + h, x, x + w };
 		l->nhorizontal += 2;
+		if (x + w > l->w) { l->w = x + w; }
+		if (y + h > l->h) { l->h = y + h; }
 	}
 
 	qsort(l->vertical, l->nvertical, sizeof(line), cmp_lines);
 	qsort(l->horizontal, l->nhorizontal, sizeof(line), cmp_lines);
 
-	SDL_DestroyTexture(l->background);
-	l->background = redraw_background(s);
+	l->w += 24;
+	l->h += 24;
 
 	return l;
 }
@@ -214,6 +229,19 @@ static level *static_level(json_t *platforms, json_t *rooms, editor_state *s)
 static void update_state(editor_action const *a, editor_state *s)
 {
 	s->run = !a->quit;
+
+	if (a->toggle_terrain) {
+		s->debug.show_terrain_collision = !s->debug.show_terrain_collision;
+	}
+
+	if (a->toggle_pan) {
+		s->panning = !s->panning;
+	}
+
+	if (s->panning) {
+		s->view.x += a->movement.x;
+		s->view.y += a->movement.y;
+	}
 
 	if (a->start_select || a->select || a->move_mouse) {
 		s->mouse = a->coord;
@@ -242,6 +270,9 @@ static void update_state(editor_action const *a, editor_state *s)
 				s->selection.h *= -1;
 			}
 
+			s->selection.x -= s->view.x;
+			s->selection.y -= s->view.y;
+
 			s->selecting = SDL_FALSE;
 			if (s->selection.h <= s->platf.box.h) {
 				s->selection.w = s->platf.box.w * (s->selection.w / s->platf.box.w);
@@ -249,22 +280,27 @@ static void update_state(editor_action const *a, editor_state *s)
 				add_rect(s->platforms, &s->selection);
 			} else {
 				s->selection.w = s->floor.box.w * (s->selection.w / s->floor.box.w);
-				s->selection.h = s->wall.box.h * (s->selection.h / s->wall.box.h);
+				s->selection.h = s->floor.box.h * (s->selection.h / s->floor.box.h);
 				add_rect(s->rooms, &s->selection);
 			}
 
 			puts("level changed, updating");
 			destroy_level(s->cached);
 			free(s->cached);
-			s->cached = static_level(s->platforms, s->rooms, s);
+			s->cached = static_level(s->platforms, s->rooms);
+			SDL_DestroyTexture(s->cached->background);
+			s->cached->background = redraw_background(s);
+
 		}
 	}
 
+	/*
 	if (a->resized) {
 		puts("window resize, redrawing bg");
 		SDL_DestroyTexture(s->cached->background);
 		s->cached->background = redraw_background(s);
 	}
+	*/
 
 	unsigned ticks = SDL_GetTicks();
 	if (ticks - s->ticks >= TICK) {
@@ -288,24 +324,43 @@ static void handle_event(SDL_Event const *e, editor_action *a)
 		case SDLK_q:
 			a->quit = SDL_TRUE;
 			break;
+		case SDLK_t:
+			a->toggle_terrain = SDL_TRUE;
+			break;
 		default:
 			break;
 		}
 		break;
 	case SDL_MOUSEBUTTONDOWN:
-		a->start_select = SDL_TRUE;
+		switch (e->button.button) {
+		case SDL_BUTTON_LEFT:
+			a->start_select = SDL_TRUE;
+			break;
+		case SDL_BUTTON_RIGHT:
+			a->toggle_pan = SDL_TRUE;
+			break;
+		}
 		a->coord.x = e->button.x;
 		a->coord.y = e->button.y;
 		break;
 	case SDL_MOUSEBUTTONUP:
-		a->select = SDL_TRUE;
+		switch (e->button.button) {
+		case SDL_BUTTON_LEFT:
+			a->select = SDL_TRUE;
+			break;
+		case SDL_BUTTON_RIGHT:
+			a->toggle_pan = SDL_TRUE;
+			break;
+		}
 		a->coord.x = e->button.x;
 		a->coord.y = e->button.y;
 		break;
 	case SDL_MOUSEMOTION:
 		a->move_mouse = SDL_TRUE;
-		a->coord.x = e->button.x;
-		a->coord.y = e->button.y;
+		a->coord.x = e->motion.x;
+		a->coord.y = e->motion.y;
+		a->movement.x = e->motion.xrel;
+		a->movement.y = e->motion.yrel;
 		break;
 	case SDL_WINDOWEVENT:
 		a->resized = e->window.event == SDL_WINDOWEVENT_RESIZED;
@@ -317,7 +372,16 @@ static void handle_event(SDL_Event const *e, editor_action *a)
 
 void clear_action(editor_action *a)
 {
-	*a = (editor_action) { quit: SDL_FALSE, start_select: SDL_FALSE, select: SDL_FALSE, coord: { x: 0, y: 0 }};
+	*a = (editor_action) {
+		quit: SDL_FALSE,
+		start_select: SDL_FALSE,
+		select: SDL_FALSE,
+		coord: { x: 0, y: 0 },
+		movement: { x: 0, y: 0 },
+		resized: SDL_FALSE,
+		move_mouse: SDL_FALSE,
+		toggle_terrain: SDL_FALSE,
+		toggle_pan: SDL_FALSE };
 	clear_order(&a->player);
 }
 
@@ -326,8 +390,14 @@ static void render(editor_state const *s)
 	SDL_SetRenderDrawColor(s->r, 20, 40, 170, 255); /* blue */
 	SDL_RenderClear(s->r);
 
-	draw_background(s->r, s->cached->background, 0);
+	SDL_RenderCopy(s->r, s->scenery, 0, 0);
 
+	SDL_Rect r = { s->view.x, s->view.y, s->cached->w, s->cached->h };
+	SDL_RenderCopy(s->r, s->cached->background, 0, &r);
+
+	int w, h;
+	SDL_GetWindowSize(s->w, &w, &h);
+	SDL_Rect screen = { -s->view.x, -s->view.y, w, h };
 	SDL_SetRenderDrawColor(s->r, 23, 225, 38, 255); /* lime */
 	if (s->selecting) {
 		SDL_RenderDrawRect(s->r, &s->selection);
@@ -339,10 +409,11 @@ static void render(editor_state const *s)
 		}
 	}
 
-	SDL_Rect screen = { 0, 0, 0, 0 };
 	draw_entity(s->r, &screen, &s->player, 0);
 
-	draw_terrain_lines(s->r, s->cached, &screen);
+	if (s->debug.show_terrain_collision) {
+		draw_terrain_lines(s->r, s->cached, &screen);
+	}
 
 	int l = 0;
 	render_line(s->r, st_names[s->player.st], s->font, l++);
@@ -367,7 +438,6 @@ static SDL_Renderer *init(SDL_Window **w)
 
 	SDL_Surface *ico = IMG_Load("../icon.gif");
 	if (ico) {
-		puts("have icon");
 		SDL_SetWindowIcon(*w, ico);
 		SDL_FreeSurface(ico);
 	}
@@ -411,8 +481,12 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend, SDL_Window *w)
 		return SDL_FALSE;
 	}
 
-	SDL_bool ok;
 	SDL_Surface *srf;
+	srf = IMG_Load("../level/bliss.jpg");
+	if (!srf) { return SDL_FALSE; }
+	st->scenery = SDL_CreateTextureFromSurface(rend, srf);
+
+	SDL_bool ok;
 	srf = load_tile_info("../level/floor_ceiling_48x24.tga", &st->platf);
 	if (!srf) { return SDL_FALSE; }
 
@@ -462,7 +536,9 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend, SDL_Window *w)
 	SDL_Rect plat = { x: ft.x - hb.w, y: ft.y + 100, w: 2 * hb.w, h: 0 };
 	add_rect(st->platforms, &plat);
 
-	st->cached = static_level(st->platforms, st->rooms, st);
+	st->cached = static_level(st->platforms, st->rooms);
+	st->cached->background = redraw_background(st);
+	clear_debug(&st->debug);
 
 	st->ticks = SDL_GetTicks();
 
@@ -486,6 +562,7 @@ static void destroy_state(editor_state const *st)
 	destroy_tile(&st->wall);
 	destroy_tile(&st->floor);
 	destroy_tile(&st->platf);
+	SDL_DestroyTexture(st->scenery);
 	SDL_DestroyRenderer(st->r);
 	SDL_DestroyWindow(st->w);
 }

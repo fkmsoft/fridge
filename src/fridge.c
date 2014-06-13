@@ -97,7 +97,6 @@ static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *pla
 static void render(session const *s, game_state const *gs);
 static void clear_game(game_state *gs);
 static void clear_event(game_event *ev);
-static void clear_debug(debug_state *d);
 
 /* collisions */
 static SDL_bool in_rect(SDL_Point const *p, SDL_Rect const *r);
@@ -769,16 +768,6 @@ static void clear_event(game_event *ev)
 	ev->reload_conf = SDL_FALSE;
 	ev->keyboard = SDL_FALSE;
 	ev->reset =SDL_FALSE;
-}
-
-static void clear_debug(debug_state *d)
-{
-	d->active = SDL_FALSE;
-	d->pause = SDL_FALSE;
-	d->frames = SDL_TRUE;
-	d->hitboxes = SDL_TRUE;
-	d->show_terrain_collision = SDL_FALSE;
-	d->message_positions = SDL_TRUE;
 }
 
 /* collisions */

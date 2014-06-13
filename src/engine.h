@@ -26,6 +26,8 @@ typedef struct {
 
 typedef struct {
 	SDL_Texture *background;
+	int w;
+	int h;
 	int nvertical;
 	int nhorizontal;
 	line *vertical;
@@ -108,6 +110,7 @@ void load_entity_rule(json_t *src, entity_rule *er, char const *n);
 SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, entity_rule *er, char const *root);
 void load_state(entity_state *es);
 void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st);
+void clear_debug(debug_state *d);
 
 /* teardown */
 void destroy_level(level *l);
