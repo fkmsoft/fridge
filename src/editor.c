@@ -1,12 +1,5 @@
 #include <stdio.h>
 
-#ifdef WIN32
-# include <malloc.h>
-# define alloca _alloca
-#else
-# include <alloca.h>
-#endif
-
 #include <SDL.h>
 #include <SDL_ttf.h>
 
@@ -49,39 +42,15 @@ typedef struct {
 	SDL_Window *w;
 } editor_state;
 
-static void add_wall(json_t *lvl, SDL_Rect const *p, enum dir d)
-{
-	json_t *a;
-	a = json_array();
-	int x = p->x + (d == DIR_RIGHT ? p->w : 0);
-	json_array_append_new(a, json_integer(x));
-	json_array_append_new(a, json_integer(p->y));
-	json_array_append_new(a, json_integer(x));
-	json_array_append_new(a, json_integer(p->y + p->h));
-	json_array_append_new(a, json_integer(d));
-	json_array_append_new(lvl, a);
-}
-
-static void add_floor(json_t *lvl, SDL_Rect const *p)
+static void add_rect(json_t *lvl, SDL_Rect const *p)
 {
 	json_t *a;
 	a = json_array();
 	json_array_append_new(a, json_integer(p->x));
 	json_array_append_new(a, json_integer(p->y));
-	json_array_append_new(a, json_integer(p->x + p->w));
-	json_array_append_new(a, json_integer(p->y));
-	json_array_append_new(a, json_integer(1));
+	json_array_append_new(a, json_integer(p->w));
+	json_array_append_new(a, json_integer(p->h));
 	json_array_append_new(lvl, a);
-
-	if (p->h != 0) {
-		a = json_array();
-		json_array_append_new(a, json_integer(p->x));
-		json_array_append_new(a, json_integer(p->y + p->h));
-		json_array_append_new(a, json_integer(p->x + p->w));
-		json_array_append_new(a, json_integer(p->y + p->h));
-		json_array_append_new(a, json_integer(-1));
-		json_array_append_new(lvl, a);
-	}
 }
 
 static void draw_tile(SDL_Renderer *r, tile const *t, SDL_Point const *pos, SDL_bool end, SDL_bool flip)
@@ -135,26 +104,33 @@ static void draw_platforms(SDL_Renderer *r, json_t const *ps, tile const *t)
 	json_array_foreach(ps, i, m) {
 		SDL_Rect p = { x: json_integer_value(json_array_get(m, 0)),
 		               y: json_integer_value(json_array_get(m, 1)),
+			       w: json_integer_value(json_array_get(m, 2)),
 			       h: 0 };
-		p.w = json_integer_value(json_array_get(m, 2)) - p.x;
 
 		draw_platform(r, &p, t);
 	}
 }
 
-static void draw_room(SDL_Renderer *r, SDL_Rect *room, tile const *floor, tile const *wall, tile const *ceil, SDL_bool flip)
+static void draw_room(SDL_Renderer *rend, SDL_Rect const *r, tile const *floor, tile const *wall, tile const *ceil)
 {
-	if (room->h == 0) {
-		room->y += 24;
-		if (!flip) {
-			draw_tiles(r, room, floor, flip);
-		} else {
-			draw_tiles(r, room, ceil, flip);
-		}
-	} else if (room->w == 0) {
-		if (!flip) { room->x += wall->box.w; }
-		draw_tiles(r, room, wall, flip);
-	}
+	SDL_Rect loor, lwall, rwall, rceil;
+	loor  = (SDL_Rect) { r->x,        r->y,        r->w, 0    };
+	lwall = (SDL_Rect) { r->x,        r->y,        0,    r->h };
+	rwall = (SDL_Rect) { r->x + r->w, r->y,        0,    r->h };
+	rceil = (SDL_Rect) { r->x,        r->y + r->h, r->w, 0    };
+
+	lwall.x += wall->box.w / 2;
+	rwall.x += wall->box.w / 2;
+	rceil.y += ceil->box.h / 2;
+	loor.y += floor->box.h / 2;
+
+	SDL_SetRenderDrawColor(rend, 0, 0, 0, 255);
+	SDL_RenderFillRect(rend, r);
+
+	draw_tiles(rend, &loor, floor, SDL_FALSE);
+	draw_tiles(rend, &rceil, ceil, SDL_TRUE);
+	draw_tiles(rend, &rwall, wall, SDL_FALSE);
+	draw_tiles(rend, &lwall, wall, SDL_TRUE);
 }
 
 static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, tile const *wall, tile const *ceil)
@@ -166,12 +142,8 @@ static void draw_rooms(SDL_Renderer *r, json_t const *ps, tile const *floor, til
 		               y: json_integer_value(json_array_get(m, 1)),
 		               w: json_integer_value(json_array_get(m, 2)),
 		               h: json_integer_value(json_array_get(m, 3)) };
-		enum dir d = json_integer_value(json_array_get(m, 4));
 
-		p.w -= p.x == p.w ? p.w : p.x;
-		p.h -= p.y == p.h ? p.h : p.y;
-
-		draw_room(r, &p, floor, wall, ceil, d == DIR_LEFT);
+		draw_room(r, &p, floor, wall, ceil);
 	}
 }
 
@@ -194,39 +166,40 @@ static SDL_Texture *redraw_background(editor_state *s)
 static level *static_level(json_t *platforms, json_t *rooms, editor_state *s)
 {
 	level *l = malloc(sizeof(level));
-	int k = json_array_size(platforms) + json_array_size(rooms);
+	int p = json_array_size(platforms);
+	int r = json_array_size(rooms);
 
-	l->horizontal = malloc(sizeof(line) * k);
-	l->vertical = malloc(sizeof(line) * k);
+	l->horizontal = malloc(sizeof(line) * (p + 2 * r));
+	l->vertical = malloc(sizeof(line) * 2 * r);
 	l->nhorizontal = 0;
 	l->nvertical = 0;
 
 	int i;
 	json_t *m;
-	int ax, ay, bx, by;
+	int x, y, w, h;
 	json_array_foreach(platforms, i, m) {
-		ax = json_integer_value(json_array_get(m, 0));
-		ay = json_integer_value(json_array_get(m, 1));
-		bx = json_integer_value(json_array_get(m, 2));
-		by = json_integer_value(json_array_get(m, 3));
+		x = json_integer_value(json_array_get(m, 0));
+		y = json_integer_value(json_array_get(m, 1));
+		w = json_integer_value(json_array_get(m, 2));
+		h = json_integer_value(json_array_get(m, 3));
 
-		l->horizontal[l->nhorizontal] = (line) { ay, ax, bx };
+		l->horizontal[l->nhorizontal] = (line) { y, x, x + w };
 		l->nhorizontal += 1;
 	}
 
 	json_array_foreach(rooms, i, m) {
-		ax = json_integer_value(json_array_get(m, 0));
-		ay = json_integer_value(json_array_get(m, 1));
-		bx = json_integer_value(json_array_get(m, 2));
-		by = json_integer_value(json_array_get(m, 3));
+		x = json_integer_value(json_array_get(m, 0));
+		y = json_integer_value(json_array_get(m, 1));
+		w = json_integer_value(json_array_get(m, 2));
+		h = json_integer_value(json_array_get(m, 3));
 
-		if (ax == bx) {
-			l->vertical[l->nvertical] = (line) { ax, ay, by };
-			l->nvertical += 1;
-		} else {
-			l->horizontal[l->nhorizontal] = (line) { ay, ax, bx };
-			l->nhorizontal += 1;
-		}
+		l->vertical[l->nvertical + 0] = (line) { x, y, y + h };
+		l->vertical[l->nvertical + 1] = (line) { x + w, y, y + h };
+		l->nvertical += 2;
+
+		l->horizontal[l->nhorizontal + 0] = (line) { y, x, x + w };
+		l->horizontal[l->nhorizontal + 1] = (line) { y + h, x, x + w };
+		l->nhorizontal += 2;
 	}
 
 	qsort(l->vertical, l->nvertical, sizeof(line), cmp_lines);
@@ -273,13 +246,11 @@ static void update_state(editor_action const *a, editor_state *s)
 			if (s->selection.h <= s->platf.box.h) {
 				s->selection.w = s->platf.box.w * (s->selection.w / s->platf.box.w);
 				s->selection.h = 0;
-				add_floor(s->platforms, &s->selection);
+				add_rect(s->platforms, &s->selection);
 			} else {
 				s->selection.w = s->floor.box.w * (s->selection.w / s->floor.box.w);
 				s->selection.h = s->wall.box.h * (s->selection.h / s->wall.box.h);
-				add_floor(s->rooms, &s->selection);
-				add_wall(s->rooms, &s->selection, DIR_LEFT);
-				add_wall(s->rooms, &s->selection, DIR_RIGHT);
+				add_rect(s->rooms, &s->selection);
 			}
 
 			puts("level changed, updating");
@@ -364,14 +335,7 @@ static void render(editor_state const *s)
 		if (s->selection.h <= s->platf.box.h) {
 			draw_platform(s->r, &roof, &s->platf);
 		} else {
-			draw_room(s->r, &roof, &s->floor, &s->wall, &s->ceil, SDL_FALSE);
-			roof.y += s->selection.h;
-			draw_room(s->r, &roof, &s->floor, &s->wall, &s->ceil, SDL_FALSE);
-			roof = (SDL_Rect) { x: s->selection.x, y: s->selection.y, w: 0, h: s->selection.h };
-			draw_room(s->r, &roof, &s->floor, &s->wall, &s->ceil, SDL_TRUE);
-			roof.x += s->selection.w;
-			roof.x = s->floor.box.w * (roof.x / s->floor.box.w);
-			draw_room(s->r, &roof, &s->floor, &s->wall, &s->ceil, SDL_FALSE);
+			draw_room(s->r, &s->selection, &s->floor, &s->wall, &s->ceil);
 		}
 	}
 
@@ -495,8 +459,8 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend, SDL_Window *w)
 	entity_hitbox(&st->player, &hb);
 	ft = entity_feet(&hb);
 
-	SDL_Rect plat = { x: ft.x - hb.w, y: ft.y + 100, w: ft.x + hb.w, h: 0 };
-	add_floor(st->platforms, &plat);
+	SDL_Rect plat = { x: ft.x - hb.w, y: ft.y + 100, w: 2 * hb.w, h: 0 };
+	add_rect(st->platforms, &plat);
 
 	st->cached = static_level(st->platforms, st->rooms, st);
 
