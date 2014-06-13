@@ -245,34 +245,30 @@ static level *static_level(json_t *platforms, json_t *rooms)
 
 static void update_terrain(editor_action const *a, editor_state *s)
 {
-	if (s->selection.x < 0) { s->view.x += s->selection.x; }
-	if (s->selection.y < 0) { s->view.y += s->selection.y; }
+	int new_x = s->floor.box.w * ((a->coord.x - s->view.x) / s->floor.box.w);
+	int dx = new_x - s->selection.x;
+	if (dx > 0) {
+		s->selection.w = dx;
+	} else {
+		s->selection.x = new_x;
+		s->selection.w += -dx;
+	}
 
-	s->selection.w = a->coord.x - s->selection.x;
-	s->selection.h = a->coord.y - s->selection.y;
+	int new_y = s->floor.box.h * ((a->coord.y - s->view.y) / s->floor.box.h);
+	int dy = new_y - s->selection.y;
+	if (dy > 0) {
+		s->selection.h = dy;
+	} else {
+		s->selection.y = new_y;
+		s->selection.h += -dy;
+	}
 
 	if (a->select) {
-		if (s->selection.w < 0) {
-			s->selection.x += s->selection.w;
-			s->selection.w *= -1;
-		}
-
-		if (s->selection.h < 0) {
-			s->selection.y = s->selection.h;
-			s->selection.h *= -1;
-		}
-
-		s->selection.x -= s->view.x;
-		s->selection.y -= s->view.y;
-
 		s->selecting = SDL_FALSE;
 		if (s->selection.h <= s->platf.box.h) {
-			s->selection.w = s->platf.box.w * (s->selection.w / s->platf.box.w);
 			s->selection.h = 0;
 			add_rect(s->platforms, &s->selection);
 		} else {
-			s->selection.w = s->floor.box.w * (s->selection.w / s->floor.box.w);
-			s->selection.h = s->floor.box.h * (s->selection.h / s->floor.box.h);
 			add_rect(s->rooms, &s->selection);
 		}
 
@@ -301,7 +297,7 @@ static void update_state(editor_action const *a, editor_state *s)
 		s->md = (s->md + 1) % NMODES;
 	}
 
-	if (s->panning) {
+	if (s->panning && a->move_mouse) {
 		s->view.x += a->movement.x;
 		s->view.y += a->movement.y;
 	}
@@ -321,8 +317,11 @@ static void update_state(editor_action const *a, editor_state *s)
 	}
 
 	if (a->start_select) {
-		s->selection.x = a->coord.x;
-		s->selection.y = a->coord.y;
+		if (a->coord.x < 0) { s->view.x += a->coord.x; }
+		if (a->coord.y < 0) { s->view.y += a->coord.y; }
+
+		s->selection.x = s->floor.box.w * ((a->coord.x - s->view.x) / s->floor.box.w);
+		s->selection.y = s->floor.box.h * ((a->coord.y - s->view.y) / s->floor.box.h);
 		s->selection.w = 0;
 		s->selection.h = 0;
 		s->selecting = SDL_TRUE;
@@ -452,12 +451,13 @@ static void render(editor_state const *s)
 	SDL_Rect screen = { -s->view.x, -s->view.y, w, h };
 	SDL_SetRenderDrawColor(s->r, 23, 225, 38, 255); /* lime */
 	if (s->md == ED_TERRAIN && s->selecting) {
-		SDL_RenderDrawRect(s->r, &s->selection);
-		SDL_Rect roof = { x: s->selection.x, y: s->selection.y, w: s->selection.w, h: 0 };
+		SDL_Rect sel = { x: s->view.x + s->selection.x, y: s->view.y + s->selection.y, w: s->selection.w, h: s->selection.h };
+		SDL_RenderDrawRect(s->r, &sel);
 		if (s->selection.h <= s->platf.box.h) {
-			draw_platform(s->r, &roof, &s->platf);
+			sel.h = 0;
+			draw_platform(s->r, &sel, &s->platf);
 		} else {
-			draw_room(s->r, &s->selection, &s->floor, &s->wall, &s->ceil);
+			draw_room(s->r, &sel, &s->floor, &s->wall, &s->ceil);
 		}
 	}
 
