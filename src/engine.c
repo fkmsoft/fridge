@@ -1,5 +1,9 @@
 #include "engine.h"
 
+SDL_bool pt_on_line(SDL_Point const *p, line const *l);
+static enum hit intersects_x(line const *l, SDL_Rect const *r);
+static enum hit intersects_y(line const *l, SDL_Rect const *r);
+
 static int entity_jump(entity_state *e, level const *terrain, SDL_bool walk, SDL_bool jump);
 
 /* loading */
@@ -138,6 +142,13 @@ void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, 
 	es->spawn.h = er->start_dim.h;
 	es->jump_timeout = 0;
 	es->fall_time = 0;
+}
+
+/* teardown */
+void destroy_level(level *l)
+{
+	free(l->vertical);
+	free(l->horizontal);
 }
 
 /* state updates */
@@ -331,19 +342,40 @@ void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move
 }
 
 /* collision */
-enum hit collides_with_terrain(SDL_Rect const *r, level const *t)
+static int first_idx(line const *a, int n, int x)
+{
+	int r, l, i;
+	l = 0;
+	r = n;
+	while (l + 1 < r) {
+		i = l + (r - l) / 2;
+		if (x < a[i].p) {
+			r = i - 1;
+		} else if (x > a[i].p) {
+			l = i + 1;
+		} else {
+			r = i;
+		}
+	}
+
+	return l;
+}
+
+enum hit collides_with_terrain(SDL_Rect const *r, level const *lev)
 {
 	enum hit a = HIT_NONE;
 
-	SDL_Rect top = { x: r->x, y: r->y, w: r->w, h: r->h / 2 };
-	SDL_Rect bot = { x: r->x, y: r->y + r->h / 2, w: r->w, h: r->h / 2 - 1 };
+	SDL_Rect hb = *r;
+	hb.h -= 1;
+
 	int i;
-	for (i = 0; i < t->nlines; i++) {
-		enum hit ht, hb;
-		ht = intersects(&t->l[i], &top);
-		hb = intersects(&t->l[i], &bot);
-		if (ht != HIT_NONE) { a |= (ht | HIT_TOP); }
-		if (hb != HIT_NONE) { a |= (hb | HIT_BOT); }
+	for (i = first_idx(lev->horizontal, lev->nhorizontal, r->y); i < lev->nhorizontal && lev->horizontal[i].p <= r->y + r->h; i++) {
+		a = intersects_x(&lev->horizontal[i], &hb);
+		if (a != HIT_NONE) { return a; }
+	}
+	for (i = first_idx(lev->vertical, lev->nvertical, r->x); i < lev->nvertical && lev->vertical[i].p <= r->x + r->w; i++) {
+		a = intersects_y(&lev->vertical[i], &hb);
+		if (a != HIT_NONE) { return a; }
 	}
 
 	return a;
@@ -354,8 +386,8 @@ SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t)
 	SDL_Point mid = entity_feet(r);
 
 	int i;
-	for (i = 0; i < t->nlines; i++) {
-		if (pt_on_line(&mid, &t->l[i])) { return SDL_TRUE; }
+	for (i = first_idx(t->horizontal, t->nhorizontal, mid.y); i < t->nhorizontal && t->horizontal[i].p <= mid.y; i++) {
+		if (pt_on_line(&mid, &t->horizontal[i])) { return SDL_TRUE; }
 	}
 
 	return SDL_FALSE;
@@ -377,6 +409,14 @@ void entity_hitbox(entity_state const *s, SDL_Rect *box)
 	}
 }
 
+int cmp_lines(void const *x, void const *y)
+{
+	line const *a = (line const *) x;
+	line const *b = (line const *) y;
+	if (a->p < b->p) { return -1; }
+	return a->p > b->p;
+}
+
 SDL_Point entity_feet(SDL_Rect const *r)
 {
 	return (SDL_Point) { x: r->x + r->w / 2, y: r->y + r->h };
@@ -384,10 +424,10 @@ SDL_Point entity_feet(SDL_Rect const *r)
 
 SDL_bool pt_on_line(SDL_Point const *p, line const *l)
 {
-	return between(p->x, l->a.x, l->b.x) && between(p->y, l->a.y, l->b.y);
+	return p->y == l->p && between(p->x, l->a, l->b);
 }
 
-enum hit intersects(line const *l, SDL_Rect const *r)
+static enum hit intersects_x(line const *l, SDL_Rect const *r)
 {
 	int rx1 = r->x;
 	int rxm = r->x + r->w / 2;
@@ -395,32 +435,39 @@ enum hit intersects(line const *l, SDL_Rect const *r)
 	int ry1 = r->y;
 	int ry2 = r->y + r->h;
 
-	if (l->a.x == l->b.x) {
-		if (between(l->a.x, rx1, rxm) &&
-			(between(ry1, l->a.y, l->b.y) || (between(ry2, l->a.y, l->b.y)) ||
-			 between(l->a.y, ry1, ry2) || between(l->b.y, ry1, ry2))) {
-			return HIT_LEFT;
-		}
+	if (between(l->p, ry1, ry2) &&
+		(between(rx1, l->a, l->b) || (between(rxm, l->a, l->b)) ||
+		 between(l->a, rx1, rxm) || between(l->b, rx1, rxm))) {
+		return HIT_LEFT;
+	}
 
-		if (between(l->a.x, rxm, rx2) &&
-			(between(ry1, l->a.y, l->b.y) || (between(ry2, l->a.y, l->b.y)) ||
-			 between(l->a.y, ry1, ry2) || between(l->b.y, ry1, ry2))) {
-			return HIT_RIGHT;
-		}
-	} else if (l->a.y == l->b.y) {
-		if (between(l->a.y, ry1, ry2) &&
-			(between(rx1, l->a.x, l->b.x) || (between(rxm, l->a.x, l->b.x)) ||
-			 between(l->a.x, rx1, rxm) || between(l->b.x, rx1, rxm))) {
-			return HIT_LEFT;
-		}
+	if (between(l->p, ry1, ry2) &&
+		(between(rxm, l->a, l->b) || (between(rx2, l->a, l->b)) ||
+		 between(l->a, rx1, rx2) || between(l->b, rx1, rx2))) {
+		return HIT_RIGHT;
+	}
 
-		if (between(l->a.y, ry1, ry2) &&
-			(between(rxm, l->a.x, l->b.x) || (between(rx2, l->a.x, l->b.x)) ||
-			 between(l->a.x, rx1, rx2) || between(l->b.x, rx1, rx2))) {
-			return HIT_RIGHT;
-		}
-	} else {
-		// TODO
+	return HIT_NONE;
+}
+
+static enum hit intersects_y(line const *l, SDL_Rect const *r)
+{
+	int rx1 = r->x;
+	int rxm = r->x + r->w / 2;
+	int rx2 = r->x + r->w;
+	int ry1 = r->y;
+	int ry2 = r->y + r->h;
+
+	if (between(l->p, rx1, rxm) &&
+		(between(ry1, l->a, l->b) || (between(ry2, l->a, l->b)) ||
+		 between(l->a, ry1, ry2) || between(l->b, ry1, ry2))) {
+		return HIT_LEFT;
+	}
+
+	if (between(l->p, rxm, rx2) &&
+		(between(ry1, l->a, l->b) || (between(ry2, l->a, l->b)) ||
+		 between(l->a, ry1, ry2) || between(l->b, ry1, ry2))) {
+		return HIT_RIGHT;
 	}
 
 	return HIT_NONE;
@@ -431,12 +478,19 @@ void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *scree
 {
 	SDL_SetRenderDrawColor(r, 200, 20, 7, 255); /* red */
 	int i;
-	for (i = 0; i < lev->nlines; i++) {
+	for (i = 0; i < lev->nhorizontal; i++) {
 		SDL_RenderDrawLine(r,
-				   lev->l[i].a.x - screen->x,
-				   lev->l[i].a.y - screen->y,
-				   lev->l[i].b.x - screen->x,
-				   lev->l[i].b.y - screen->y);
+				   lev->horizontal[i].a - screen->x,
+				   lev->horizontal[i].p - screen->y,
+				   lev->horizontal[i].b - screen->x,
+				   lev->horizontal[i].p - screen->y);
+	}
+	for (i = 0; i < lev->nvertical; i++) {
+		SDL_RenderDrawLine(r,
+				   lev->vertical[i].p - screen->x,
+				   lev->vertical[i].a - screen->y,
+				   lev->vertical[i].p - screen->x,
+				   lev->vertical[i].b - screen->y);
 	}
 }
 
@@ -569,4 +623,3 @@ char const *set_path(char const *fmt, ...)
 
 	return buf;
 }
-

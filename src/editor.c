@@ -84,39 +84,45 @@ static void add_floor(json_t *lvl, SDL_Rect const *p)
 static level *static_level(json_t *platforms, json_t *rooms)
 {
 	level *l = malloc(sizeof(level));
-	l->nlines = json_array_size(platforms) + json_array_size(rooms);
-	l->l = malloc(sizeof(line) * l->nlines);
+	int k = json_array_size(platforms) + json_array_size(rooms);
 
-	SDL_Point a, b;
+	l->horizontal = malloc(sizeof(line) * k);
+	l->vertical = malloc(sizeof(line) * k);
+	l->nhorizontal = 0;
+	l->nvertical = 0;
 
 	int i;
 	json_t *m;
+	int ax, ay, bx, by;
 	json_array_foreach(platforms, i, m) {
-		a.x = json_integer_value(json_array_get(m, 0));
-		a.y = json_integer_value(json_array_get(m, 1));
-		b.x = json_integer_value(json_array_get(m, 2));
-		b.y = json_integer_value(json_array_get(m, 3));
+		ax = json_integer_value(json_array_get(m, 0));
+		ay = json_integer_value(json_array_get(m, 1));
+		bx = json_integer_value(json_array_get(m, 2));
+		by = json_integer_value(json_array_get(m, 3));
 
-		l->l[i] = (line) { a: a, b: b };
+		l->horizontal[l->nhorizontal] = (line) { ay, ax, bx };
+		l->nhorizontal += 1;
 	}
 
-	int k = json_array_size(platforms);
 	json_array_foreach(rooms, i, m) {
-		a.x = json_integer_value(json_array_get(m, 0));
-		a.y = json_integer_value(json_array_get(m, 1));
-		b.x = json_integer_value(json_array_get(m, 2));
-		b.y = json_integer_value(json_array_get(m, 3));
+		ax = json_integer_value(json_array_get(m, 0));
+		ay = json_integer_value(json_array_get(m, 1));
+		bx = json_integer_value(json_array_get(m, 2));
+		by = json_integer_value(json_array_get(m, 3));
 
-		l->l[i + k] = (line) { a: a, b: b };
+		if (ax == bx) {
+			l->vertical[l->nvertical] = (line) { ax, ay, by };
+			l->nvertical += 1;
+		} else {
+			l->horizontal[l->nhorizontal] = (line) { ay, ax, bx };
+			l->nhorizontal += 1;
+		}
 	}
+
+	qsort(l->vertical, l->nvertical, sizeof(line), cmp_lines);
+	qsort(l->horizontal, l->nhorizontal, sizeof(line), cmp_lines);
 
 	return l;
-}
-
-static void destroy_level(level *l)
-{
-	free(l->l);
-	free(l);
 }
 
 static void update_state(editor_action const *a, editor_state *s)
@@ -165,6 +171,7 @@ static void update_state(editor_action const *a, editor_state *s)
 
 			puts("level changed, updating");
 			destroy_level(s->cached);
+			free(s->cached);
 			s->cached = static_level(s->platforms, s->rooms);
 		}
 	}

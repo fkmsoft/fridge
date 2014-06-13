@@ -127,7 +127,7 @@ static void print_event(FILE *fd, game_event *e)
 	if (e->toggle_pause)   { fputs("pause\n",    fd); }
 	if (e->toggle_debug)   { fputs("debug\n",    fd); }
 	if (e->toggle_terrain) { fputs("hits\n",     fd); }
-	if (e->reload_conf)    { fputs("conf\n",   fd); }
+	if (e->reload_conf)    { fputs("conf\n",     fd); }
 	if (e->exit)           { fputs("exit\n",     fd); }
 	if (e->keyboard)       { fputs("keyboard\n", fd); }
 	if (e->reset)          { fputs("spawn\n",    fd); }
@@ -210,6 +210,13 @@ int main(int argc, char **argv) {
 
 			unsigned char const *keystate = SDL_GetKeyboardState(0);
 			keystate_to_movement(keystate, &ge.player);
+		} else {
+			have_ev = SDL_PollEvent(&event);
+			if (have_ev) {
+				process_event(&event, &ge);
+				if (ge.exit) { break; }
+				clear_event(&ge);
+			}
 		}
 
 		ticks = SDL_GetTicks();
@@ -233,7 +240,7 @@ int main(int argc, char **argv) {
 		free(gs.entities[i].e);
 	}
 
-	free(s.level.l);
+	destroy_level(&s.level);
 	SDL_DestroyTexture(s.level.background);
 
 	if (gs.debug.font) {
@@ -954,21 +961,38 @@ static int load_collisions(level *level, json_t const *o)
 	json_t *lines_o = json_object_get(o, "collision-lines");
 
 	int k = json_array_size(lines_o);
-	level->l = malloc(sizeof(line) * k);
-	level->nlines = k;
+	level->vertical = malloc(sizeof(line) * k);
+	level->horizontal = malloc(sizeof(line) * k);
+	level->nvertical = 0;
+	level->nhorizontal = 0;
 
 	int i;
 	json_t *l;
 	json_array_foreach(lines_o, i, l) {
 		if (json_array_size(l) != 4) {
-			level->l[i] = (line) { a: { 0, 0 }, b: { 0, 0 }};
+			puts("incomplete line");
 			continue;
 		}
-		level->l[i].a.x = json_integer_value(json_array_get(l, 0));
-		level->l[i].a.y = json_integer_value(json_array_get(l, 1));
-		level->l[i].b.x = json_integer_value(json_array_get(l, 2));
-		level->l[i].b.y = json_integer_value(json_array_get(l, 3));
+		int ax, ay, bx, by;
+		ax = json_integer_value(json_array_get(l, 0));
+		ay = json_integer_value(json_array_get(l, 1));
+		bx = json_integer_value(json_array_get(l, 2));
+		by = json_integer_value(json_array_get(l, 3));
+
+		if (ax == bx) {
+			level->vertical[level->nvertical] = (line) { ax, ay, by };
+			level->nvertical += 1;
+		} else if (ay == by) {
+			level->horizontal[level->nhorizontal] = (line) { ay, ax, bx };
+			level->nhorizontal += 1;
+		} else {
+			puts("diagonal line");
+		}
 	}
+
+	/* sort by p component */
+	qsort(level->vertical, level->nvertical, sizeof(line), cmp_lines);
+	qsort(level->horizontal, level->nhorizontal, sizeof(line), cmp_lines);
 
 	return k;
 }

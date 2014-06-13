@@ -19,14 +19,17 @@ enum state { ST_IDLE, ST_WALK, ST_FALL, ST_JUMP, ST_HANG, NSTATES };
 static char const * const st_names[] = { "idle", "walk", "fall", "jump", "hang" };
 
 typedef struct {
-	SDL_Point a;
-	SDL_Point b;
+	int p;
+	int a;
+	int b;
 } line;
 
 typedef struct {
 	SDL_Texture *background;
-	int nlines;
-	line *l;
+	int nvertical;
+	int nhorizontal;
+	line *vertical;
+	line *horizontal;
 } level;
 
 typedef struct {
@@ -106,6 +109,9 @@ SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_R
 void load_state(entity_state *es);
 void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st);
 
+/* teardown */
+void destroy_level(level *l);
+
 /* state updates */
 void clear_order(entity_event *o);
 void tick_animation(entity_state *as);
@@ -119,9 +125,8 @@ void move_entity(entity_state *e, entity_event const *ev, level const *lvl, move
 enum hit collides_with_terrain(SDL_Rect const *r, level const *lev);
 SDL_bool stands_on_terrain(SDL_Rect const *r, level const *t);
 void entity_hitbox(entity_state const *s, SDL_Rect *box);
+int cmp_lines(void const *x, void const *y);
 SDL_Point entity_feet(SDL_Rect const *r);
-SDL_bool pt_on_line(SDL_Point const *p, line const *l);
-enum hit intersects(line const *l, SDL_Rect const *r);
 
 /* rendering */
 void draw_terrain_lines(SDL_Renderer *r, level const *lev, SDL_Rect const *screen);
