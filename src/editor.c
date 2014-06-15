@@ -6,6 +6,8 @@
 #include "engine.h"
 
 #define TICK 40
+#define EDITOR_CONF "editor.json"
+#define LEVEL_DIR "level"
 
 enum edit_mode { ED_TERRAIN, ED_OBJECTS, ED_DELETE, NMODES };
 static char const * const mode_names[] = { "terrain", "objects", "delete" };
@@ -441,7 +443,9 @@ static void render(editor_state const *s)
 	SDL_SetRenderDrawColor(s->r, 20, 40, 170, 255); /* blue */
 	SDL_RenderClear(s->r);
 
-	SDL_RenderCopy(s->r, s->scenery, 0, 0);
+	if (s->scenery) {
+		SDL_RenderCopy(s->r, s->scenery, 0, 0);
+	}
 
 	SDL_Rect r = { s->view.x + s->cached->dim.x, s->view.y + s->cached->dim.y, s->cached->dim.w, s->cached->dim.h };
 	SDL_RenderCopy(s->r, s->cached->background, 0, &r);
@@ -467,29 +471,31 @@ static void render(editor_state const *s)
 		draw_terrain_lines(s->r, s->cached, &screen);
 	}
 
-	int l = 0;
-	render_line(s->r, mode_names[s->md], s->font, l++);
-	render_line(s->r, st_names[s->player.st], s->font, l++);
-	if (s->selecting) { render_line(s->r, "selecting...", s->font, l++); }
+	if (s->font) {
+		int l = 0;
+		render_line(s->r, mode_names[s->md], s->font, l++);
+		render_line(s->r, st_names[s->player.st], s->font, l++);
+		if (s->selecting) { render_line(s->r, "selecting...", s->font, l++); }
+	}
 
 	SDL_RenderPresent(s->r);
 }
 
-static SDL_Renderer *init(SDL_Window **w)
+static SDL_Renderer *init(SDL_Window **w, char const *icon_file)
 {
 	int err = SDL_Init(SDL_INIT_VIDEO);
 	if (err < 0) {
-		fprintf(stderr, "error: could not init video: %s\n", SDL_GetError());
+		fprintf(stderr, "Error: Could not init video: %s\n", SDL_GetError());
 		return 0;
 	}
 
 	*w = SDL_CreateWindow("Fridge Editor", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 640, 480, SDL_WINDOW_RESIZABLE);
 	if (!*w) {
-		fprintf(stderr, "Could not init video: %s\n", SDL_GetError());
+		fprintf(stderr, "Error: Could not create window: %s\n", SDL_GetError());
 		return 0;
 	}
 
-	SDL_Surface *ico = IMG_Load("../icon.gif");
+	SDL_Surface *ico = IMG_Load(icon_file);
 	if (ico) {
 		SDL_SetWindowIcon(*w, ico);
 		SDL_FreeSurface(ico);
@@ -508,6 +514,39 @@ static SDL_Surface *load_tile_info(char const *res, tile *t)
 	return r;
 }
 
+static SDL_bool load_tile(SDL_Renderer *r, json_t *tiles, char const *key, tile *t)
+{
+	json_t *o;
+	char const *file, *path;
+	SDL_Surface *srf;
+
+	o = json_object_get(tiles, key);
+
+	file = json_string_value(json_object_get(o, "main"));
+	path = set_path("../%s/%s", LEVEL_DIR, file);
+	srf = load_tile_info(path, t);
+	if (!srf) {
+		fprintf(stderr, "Error: No main piece defined for tile `%s'\n", key);
+		return SDL_FALSE;
+	}
+
+	t->main = SDL_CreateTextureFromSurface(r, srf);
+	SDL_FreeSurface(srf);
+
+	file = json_string_value(json_object_get(o, "end"));
+	if (!file) {
+		fprintf(stderr, "Warning: No end piece defined for tile `%s'\n", key);
+		t->end = 0;
+		return SDL_TRUE;
+	}
+	path = set_path("../%s/%s", LEVEL_DIR, file);
+	srf = IMG_Load(path);
+	t->end = SDL_CreateTextureFromSurface(r, srf);
+	SDL_FreeSurface(srf);
+
+	return SDL_TRUE;
+}
+
 static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend, SDL_Window *w)
 {
 	*st = (editor_state) {
@@ -522,65 +561,65 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend, SDL_Window *w)
 		r: rend,
 		w: w };
 
-	TTF_Init();
-	st->font = TTF_OpenFont("debug_font.ttf", 14);
-	if (!st->font) { return SDL_FALSE; }
-
-	json_t *conf, *character;
+	json_t *conf;
+	char const *path;
+	path = set_path("%s/%s/%s", "..", CONF_DIR, EDITOR_CONF);
 	json_error_t err;
-	char const *path = "../conf/game.json";
 	conf = json_load_file(path, 0, &err);
 	if (*err.text != 0) {
-		fprintf(stderr, "error: in %s:%d: %s\n", path, err.line, err.text);
+		fprintf(stderr, "Error at %s:%d: %s\n", path, err.line, err.text);
 		return SDL_FALSE;
 	}
 
+	TTF_Init();
+	char const *file = json_string_value(json_object_get(conf, "font"));
+	st->font = TTF_OpenFont(file, 14);
+	if (!st->font) {
+		fprintf(stderr, "Warning: Could not open font file `%s' (%s)\n" \
+				"Warning: There will be no on-screen text\n",
+			file, TTF_GetError());
+	}
+
 	SDL_Surface *srf;
-	srf = IMG_Load("../level/bliss.jpg");
-	if (!srf) { return SDL_FALSE; }
-	st->scenery = SDL_CreateTextureFromSurface(rend, srf);
+	file = json_string_value(json_object_get(conf, "scenery"));
+	path = set_path("../%s/%s", LEVEL_DIR, file);
+	srf = IMG_Load(path);
+	if (!srf) {
+		fprintf(stderr, "Warning: Could not open scenery `%s'\n", path);
+		st->scenery = 0;
+	} else {
+		st->scenery = SDL_CreateTextureFromSurface(rend, srf);
+	}
 
 	SDL_bool ok;
-	srf = load_tile_info("../level/floor_ceiling_48x24.tga", &st->platf);
-	if (!srf) { return SDL_FALSE; }
-
-	st->platf.main = SDL_CreateTextureFromSurface(rend, srf);
-	SDL_FreeSurface(srf);
-
-	srf = IMG_Load("../level/floor_ceiling_end_24x24.tga");
-	if (!srf) { return SDL_FALSE; }
-	st->platf.end = SDL_CreateTextureFromSurface(rend, srf);
-	SDL_FreeSurface(srf);
-
-	srf = load_tile_info("../level/ceiling_48x24.tga", &st->ceil);
-	if (!srf) { return SDL_FALSE; }
-
-	st->ceil.main = SDL_CreateTextureFromSurface(rend, srf);
-	SDL_FreeSurface(srf);
-
-	st->ceil.end = 0;
-
-	srf = load_tile_info("../level/floor_48x24.tga", &st->floor);
-	if (!srf) { return SDL_FALSE; }
-	st->floor.main = SDL_CreateTextureFromSurface(rend, srf);
-	st->floor.end = 0;
-	SDL_FreeSurface(srf);
-
-	srf = load_tile_info("../level/wall_48x48.tga", &st->wall);
-	if (!srf) { return SDL_FALSE; }
-	st->wall.main = SDL_CreateTextureFromSurface(rend, srf);
-	st->wall.end = 0;
-	SDL_FreeSurface(srf);
-	
-	st->player.spawn = (SDL_Rect) { x: 100, y: 100 };
-	character = json_object_get(json_object_get(conf, "entities"), "man");
-	static entity_rule r;
-	SDL_Texture *t;
-	ok = load_entity_resource(character, "man", &t, rend, &r, "..");
+	json_t *til = json_object_get(conf, "tiles");
+	ok = load_tile(rend, til, "platform", &st->platf);
 	if (!ok) { return SDL_FALSE; }
-	json_decref(conf);
 
-	init_entity_state(&st->player, &r, t, ST_IDLE);
+	ok = load_tile(rend, til, "floor", &st->floor);
+	if (!ok) { return SDL_FALSE; }
+
+	ok = load_tile(rend, til, "ceiling", &st->ceil);
+	if (!ok) { return SDL_FALSE; }
+
+	ok = load_tile(rend, til, "wall", &st->wall);
+	if (!ok) { return SDL_FALSE; }
+
+	SDL_Texture **e_texs;
+	entity_rule *e_rules;
+	json_t *entities;
+	file = json_string_value(json_object_get(conf, "entities"));
+	path = set_path("%s/%s/%s", "..", CONF_DIR, file);
+	entities = load_entities("..", path, rend, &e_texs, &e_rules);
+	if (!entities) { return SDL_FALSE; }
+
+	int pi;
+	json_t *character;
+	character = json_object_get(entities, "man");
+	pi = json_integer_value(json_object_get(character, "index"));
+
+	st->player.spawn = (SDL_Rect) { x: 100, y: 100 };
+	init_entity_state(&st->player, &e_rules[pi], e_texs[pi], ST_IDLE);
 
 	SDL_Rect hb;
 	SDL_Point ft;
@@ -593,6 +632,7 @@ static SDL_bool init_editor(editor_state *st, SDL_Renderer *rend, SDL_Window *w)
 	st->cached = static_level(st->platforms, st->rooms);
 	st->cached->background = redraw_background(st);
 	clear_debug(&st->debug);
+	json_decref(conf);
 
 	st->ticks = SDL_GetTicks();
 
@@ -611,12 +651,12 @@ static void destroy_state(editor_state const *st)
 {
 	json_decref(st->platforms);
 	json_decref(st->rooms);
-	TTF_CloseFont(st->font);
+	if (st->font) { TTF_CloseFont(st->font); }
 	destroy_level(st->cached);
 	destroy_tile(&st->wall);
 	destroy_tile(&st->floor);
 	destroy_tile(&st->platf);
-	SDL_DestroyTexture(st->scenery);
+	if (st->scenery) { SDL_DestroyTexture(st->scenery); }
 	SDL_DestroyRenderer(st->r);
 	SDL_DestroyWindow(st->w);
 }
@@ -628,7 +668,7 @@ int main(void)
 	SDL_Window *w;
 	SDL_bool ok;
 
-	r = init(&w);
+	r = init(&w, "../icon.gif");
 	if (!r) { return 1; }
 
 	editor_action act;

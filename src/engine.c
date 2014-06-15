@@ -12,7 +12,9 @@ void load_anim(json_t *src, char const *name, char const *key, animation_rule *a
 	json_t *o, *frames, *dur, *box;
 	o = json_object_get(src, key);
 	if (!o) {
-		fprintf(stderr, "warning: no %s animation for %s\n", key, name);
+		#ifdef VERBOSE
+		fprintf(stderr, "Warning: No %s animation for %s\n", key, name);
+		#endif
 		return;
 	}
 
@@ -69,6 +71,46 @@ void load_entity_rule(json_t *src, entity_rule *er, char const *n)
         }
 }
 
+
+json_t *load_entities(char const *root, char const *file, SDL_Renderer *r, SDL_Texture ***textures, entity_rule **rules)
+{
+	json_t *ent;
+	json_error_t e;
+	ent = json_load_file(file, 0, &e);
+	if (*e.text != 0) {
+		fprintf(stderr, "Error at %s:%d: %s\n", file, e.line, e.text);
+		return 0;
+	}
+
+	int k;
+	k = json_object_size(ent);
+	*textures = malloc(sizeof(SDL_Texture *) * k);
+	*rules = malloc(sizeof(entity_rule) * k);
+
+	json_t *o;
+	int i = 0;
+	SDL_bool ok;
+	char const *name;
+	entity_rule *rule = *rules;
+	SDL_Texture **tex = *textures;
+	json_object_foreach(ent, name, o) {
+
+		ok = load_entity_resource(o, name, tex, r, rule, root);
+		if (!ok) {
+			return 0;
+		}
+
+		/* save the index in the buffer, so the items in groups can
+		 * link directly to their rules and textures later: */
+		json_object_set_new(o, "index", json_integer(i));
+		i += 1;
+		rule += 1;
+		tex += 1;
+	}
+
+	return ent;
+}
+
 SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, entity_rule *er, char const *root)
 {
 	json_t *o;
@@ -83,7 +125,7 @@ SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_R
 	json_error_t e;
 	o = json_load_file(path, 0, &e);
 	if (*e.text != 0) {
-		fprintf(stderr, "error: in %s:%d: %s\n", path, e.line, e.text);
+		fprintf(stderr, "Error at %s:%d: %s\n", path, e.line, e.text);
 		return SDL_FALSE;
 	}
 
@@ -581,7 +623,9 @@ SDL_bool get_int_field(json_t *o, char const *n, char const *s, int *r)
 
 	var = json_object_get(o, s);
 	if (!var) {
-		fprintf(stderr, "warning: no %s for %s\n", s, n);
+		#ifdef VERBOSE
+		fprintf(stderr, "Warning: No %s for %s\n", s, n);
+		#endif
                 if (!streq(n, "custom-rule")) {
                         *r = 0;
                 }
@@ -598,7 +642,9 @@ SDL_bool get_float_field(json_t *o, char const *n, char const *s, double *r)
 
 	var = json_object_get(o, s);
 	if (!var) {
-		fprintf(stderr, "warning: no %s for %s\n", s, n);
+		#ifdef VERBOSE
+		fprintf(stderr, "Warning: No %s for %s\n", s, n);
+		#endif
 		*r = 0;
 		return SDL_FALSE;
 	}

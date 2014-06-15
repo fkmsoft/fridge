@@ -19,7 +19,7 @@ Dependencies:
 * SDL2
 * SDL2_ttf
 * SDL2_image
-* jansson
+* jansson >= 2.5
 
 Used Assets:
 * Burger by Gobusto: http://opengameart.org/content/burger (CC-BY-SA 3.0)

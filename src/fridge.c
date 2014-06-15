@@ -87,7 +87,7 @@ typedef struct {
 static SDL_bool init_game(session *s, game_state *g, char const *root);
 static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const *root);
 static void load_intro(entity_state *intro, session const *s, json_t *o, char const *k, entity_rule const *e_rules, SDL_Texture **e_texs);
-void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st);
+void init_group(group *g, json_t const *game, json_t const *entities, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st);
 
 /* high level game */
 static void process_event(SDL_Event const *ev, game_event *r);
@@ -315,7 +315,7 @@ static SDL_bool init_game(session *s, game_state *gs, char const *root)
 static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const *root)
 {
 	json_t *entities, *fnt, *level;
-	char const *path;
+	char const *file, *path;
 
 	/* load config */
 	fnt = json_object_get(game, "font");
@@ -345,7 +345,7 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 	json_error_t e;
 	level = json_load_file(path, 0, &e);
 	if (*e.text != 0) {
-		fprintf(stderr, "error: in %s:%d: %s\n", path, e.line, e.text);
+		fprintf(stderr, "Error at %s:%d: %s\n", path, e.line, e.text);
 		return SDL_FALSE;
 	}
 
@@ -359,34 +359,21 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 	SDL_Texture **e_texs;
 	entities = json_object_get(game, "entities");
 	if (!entities) {
-		fprintf(stderr, "error: no entities defined, need player\n");
+		fprintf(stderr, "Error: No entities defined, need player\n");
 		return SDL_FALSE;
 	}
 
-	int k;
-	k = json_object_size(entities);
-	e_texs = malloc(sizeof(SDL_Texture *) * k);
-	e_rules = malloc(sizeof(entity_rule) * k);
-
-	int i = 0;
-	char const *name;
-	json_t *o;
-	json_object_foreach(entities, name, o) {
-
-		ok = load_entity_resource(o, name, &e_texs[i], s->r, &e_rules[i], root);
-		if (!ok) {
-			return SDL_FALSE;
-		}
-
-		/* save the index in the buffer, so the items in groups can
-		 * link directly to their rules and textures later: */
-		json_object_set_new(o, "index", json_integer(i));
-		i += 1;
+	file = json_string_value(json_object_get(entities, "resource"));
+	path = set_path("%s/%s/%s", root, CONF_DIR, file);
+	entities = load_entities(root, path, s->r, &e_texs, &e_rules);
+	if (!entities) {
+		fprintf(stderr, "Error: Could not load entities\n");
+		return SDL_FALSE;
 	}
 
-	init_group(&gs->entities[GROUP_PLAYER], game, "players", e_texs, e_rules, ST_IDLE);
-	init_group(&gs->entities[GROUP_OBJECTS], game, "objects", e_texs, e_rules, ST_IDLE);
-	init_group(&gs->entities[GROUP_ENEMIES], game, "enemies", e_texs, e_rules, ST_WALK);
+	init_group(&gs->entities[GROUP_PLAYER ], game, entities, "players", e_texs, e_rules, ST_IDLE);
+	init_group(&gs->entities[GROUP_OBJECTS], game, entities, "objects", e_texs, e_rules, ST_IDLE);
+	init_group(&gs->entities[GROUP_ENEMIES], game, entities, "enemies", e_texs, e_rules, ST_WALK);
 
 	load_intro(&gs->logo, s, entities, "logo", e_rules, e_texs);
 	load_intro(&gs->intro, s, entities, "intro", e_rules, e_texs);
@@ -395,6 +382,7 @@ static SDL_bool load_config(session *s, game_state *gs, json_t *game, char const
 	 * e_texs buffer */
 	free(e_texs);
 
+	json_decref(entities);
 	json_decref(game);
 
 	return SDL_TRUE;
@@ -405,7 +393,7 @@ static void load_intro(entity_state *intro, session const *s, json_t *o, char co
 	json_t *io;
 	io = json_object_get(o, k);
 	if (!io) {
-		fprintf(stderr, "warning: no intro found for `%s'\n", k);
+		fprintf(stderr, "Warning: No intro found for `%s'\n", k);
 		intro->active = SDL_FALSE;
 	} else {
 		int i = json_integer_value(json_object_get(io, "index"));
@@ -418,12 +406,11 @@ static void load_intro(entity_state *intro, session const *s, json_t *o, char co
 	}
 }
 
-void init_group(group *g, json_t const *game, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st)
+void init_group(group *g, json_t const *game, json_t const *entities, char const *key, SDL_Texture **e_texs, entity_rule const *e_rules, enum state st)
 {
-	json_t *objs, *entities;
+	json_t *objs;
 	entity_state *a;
 
-	entities = json_object_get(game, "entities");
 	objs = json_object_get(game, key);
 	if (!objs) {
 		g->n = 0;
@@ -900,7 +887,7 @@ static SDL_bool load_messages(session *s, json_t *game, TTF_Font *font, int font
 	SDL_Surface *msg_srf;
 	msg_srf = load_asset_surf(o, root, "resource");
 	if (!msg_srf) {
-		fprintf(stderr, "warning: message texture missing\n");
+		fprintf(stderr, "Warning: Message texture missing\n");
 		mi->n = 0;
 		return SDL_FALSE;
 	}

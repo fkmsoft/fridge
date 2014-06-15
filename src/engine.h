@@ -106,6 +106,7 @@ typedef struct {
 void load_anim(json_t *src, char const *name, char const *key, animation_rule *a);
 SDL_Texture *load_asset_tex(json_t *a, char const *d, SDL_Renderer *r, char const *k);
 void load_entity_rule(json_t *src, entity_rule *er, char const *n);
+json_t *load_entities(char const *root, char const *file, SDL_Renderer *r, SDL_Texture ***textures, entity_rule **rules);
 SDL_bool load_entity_resource(json_t *src, char const *n, SDL_Texture **t, SDL_Renderer *r, entity_rule *er, char const *root);
 void load_state(entity_state *es);
 void init_entity_state(entity_state *es, entity_rule const *er, SDL_Texture *t, enum state st);

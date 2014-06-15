@@ -1,0 +1,12 @@
+{ "font": "debug_font.ttf",
+  "icon": "icon.gif",
+  "tiles": {
+    "platform": {
+      "main": "floor_ceiling_48x24.tga",
+      "end": "floor_ceiling_end_24x24.tga" },
+    "floor": { "main": "floor_48x24.tga" },
+    "ceiling": { "main": "ceiling_48x24.tga" },
+    "wall": { "main": "wall_48x48.tga" },
+    "TODO": [ "wall_floor_inner_48x48.tga" ]},
+  "entities": "entities.json",
+  "scenery": "bliss.jpg" }
