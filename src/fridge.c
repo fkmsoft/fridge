@@ -956,7 +956,8 @@ static int load_collisions(level *level, json_t const *o)
 			level->horizontal[level->nhorizontal] = (line) { ay, ax, bx };
 			level->nhorizontal += 1;
 		} else {
-			puts("diagonal line");
+			fprintf(stderr, "Warning: Ignoring diagonal line %d %d - %d %d\n",
+					ax, ay, bx, by);
 		}
 	}
 
