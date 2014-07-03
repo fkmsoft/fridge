@@ -89,16 +89,15 @@ struct
       fun or_flags [] x = x
         | or_flags (f::fs) x = or_flags fs (x + (int_of_parse_flag f))
       val obj = lower_load (file, (or_flags flags 0), C.address err)
-      val msg = C.fromCstring (C.address (C.offset (int_fields + text_size) C.Cchar err))
       val error = {
         line = C.fromCint (C.offset 0 C.Cint err),
         column = C.fromCint (C.offset 1 C.Cint err),
         position = C.fromCint (C.offset 2 C.Cint err),
         source = C.fromCstring (C.address (C.offset int_fields C.Cchar err)),
-        text = msg
+        text = C.fromCstring (C.address (C.offset (int_fields + text_size) C.Cchar err))
       }
     in
-      if size msg > 0 then
+      if size (#text error) > 0 then
         raise (Parse_Error error)
       else
         obj
