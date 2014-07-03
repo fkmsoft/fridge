@@ -5,5 +5,7 @@
 /src/json_test
 /src/editor
 /src/debug_font.ttf
-generate_mc_asset.bat
+/ml/*.o
+/ml/json_test
 /lib
+generate_mc_asset.bat

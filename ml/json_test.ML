@@ -1,4 +1,10 @@
 fun main () =
-let val obj = Json.load_file ("../conf/ghost.json", 0, 0)
- in print (Json.dumps (obj, 0))
-end
+  let
+    val file = "../conf/ghost.json"
+    val msg =  Json.dumps (Json.load_file file []) [Json.Sort_Keys] handle
+      Json.Parse_Error {source=src, text=err, ...} => "Error parsing " ^ src ^ ": " ^ err
+  in
+    print (msg ^ "\n")
+  end
+
+(* vim: se ai et: *)
