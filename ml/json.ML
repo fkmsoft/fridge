@@ -1,8 +1,6 @@
-structure C = CInterface
-
 signature JSON =
 sig
-  type json = C.vol
+  type json = CInterface.vol
   type error = {
     line : int,
     column : int,
@@ -11,6 +9,7 @@ sig
     text : string }
 
   exception Parse_Error of error
+  exception Invalid_Indent of int
 
   datatype parse_flags =
     Reject_Duplicates |
@@ -33,6 +32,8 @@ end
 
 structure Json : JSON =
 struct
+  structure C = CInterface
+
   type json = C.vol
   type error = {
     line : int,
@@ -58,6 +59,23 @@ struct
     Encode_Any |
     Escape_Slash
   
+  exception Invalid_Indent of int
+
+  fun int_of_parse_flag Reject_Duplicates = 0x1
+    | int_of_parse_flag Disable_Eof_Check = 0x2
+    | int_of_parse_flag Decode_Any = 0x4
+    | int_of_parse_flag Decode_Int_As_Real = 0x8
+
+  fun int_of_print_flag (Indent i) =
+      if i > (0x20 - 1) then raise (Invalid_Indent i)
+      else i
+    | int_of_print_flag Compact = 0x20
+    | int_of_print_flag Ensure_Ascii = 0x40
+    | int_of_print_flag Sort_Keys = 0x80
+    | int_of_print_flag Preserve_Order = 0x100
+    | int_of_print_flag Encode_Any = 0x200
+    | int_of_print_flag Escape_Slash = 0x400
+
   val gets = C.get_sym "/usr/lib/libjansson.so"
 
   fun load_file file flags =
@@ -69,16 +87,13 @@ struct
       val text_size = 80
       val err = C.alloc (int_fields + source_size + text_size) C.Cchar
       fun or_flags [] x = x
-        | or_flags (Reject_Duplicates::fs) x = or_flags fs (x + 1)
-        | or_flags (Disable_Eof_Check::fs) x = or_flags fs (x + 2)
-        | or_flags (Decode_Any::fs) x = or_flags fs (x + 4)
-        | or_flags (Decode_Int_As_Real::fs) x = or_flags fs (x + 8)
+        | or_flags (f::fs) x = or_flags fs (x + (int_of_parse_flag f))
       val obj = lower_load (file, (or_flags flags 0), C.address err)
       val msg = C.fromCstring (C.address (C.offset (int_fields + text_size) C.Cchar err))
       val error = {
-        line = C.fromCint err,
+        line = C.fromCint (C.offset 0 C.Cint err),
         column = C.fromCint (C.offset 1 C.Cint err),
-        position = C.fromCint (C.offset 3 C.Cint err),
+        position = C.fromCint (C.offset 2 C.Cint err),
         source = C.fromCstring (C.address (C.offset int_fields C.Cchar err)),
         text = msg
       }
@@ -93,13 +108,7 @@ struct
     let
       val low_dumps = C.call2 (gets "json_dumps") (C.POINTER, C.INT) C.STRING
       fun or_flags [] x = x
-        | or_flags (Indent i::fs) x = or_flags fs (x + i)
-        | or_flags (Compact::fs) x = or_flags fs (x + 0x20)
-        | or_flags (Ensure_Ascii::fs) x = or_flags fs (x + 0x40)
-        | or_flags (Sort_Keys::fs) x = or_flags fs (x + 0x80)
-        | or_flags (Preserve_Order::fs) x = or_flags fs (x + 0x100)
-        | or_flags (Encode_Any::fs) x = or_flags fs (x + 0x200)
-        | or_flags (Escape_Slash::fs) x = or_flags fs (x + 0x400)
+        | or_flags (f::fs) x = or_flags fs (x + (int_of_print_flag f))
     in
       low_dumps (obj, or_flags flags 0)
     end
