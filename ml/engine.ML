@@ -6,20 +6,19 @@ sig
 
   type point = { x : int, y : int }
   type line = { p : int, a : int, b : int }
-  type rect = { x : int, y : int, w : int, h : int }
   type level = {
     background : Sdl.texture,
-    dim : rect,
+    dim : Sdl.rect,
     vertical : line list,
     horizontal : line list }
 
   type animation_rule = {
     frames : int vector,
     duration : int vector,
-    box : rect }
+    box : Sdl.rect }
 
   type entity_rule = {
-    start_dim : rect,
+    start_dim : Sdl.rect,
     walk_dist : int,
     jump_dist : int * int,
     jump_time : int,
@@ -38,8 +37,8 @@ sig
   type entity_state = {
     active : bool,
     pos : point,
-    hitbox : rect,
-    spawn : rect,
+    hitbox : Sdl.rect,
+    spawn : Sdl.rect,
     dir : dir,
     st : state,
     jump_timeout : int,
@@ -101,18 +100,18 @@ sig
   val move_entity : entity_state -> entity_event -> level -> move_log * entity_state
 
   (*** collision ***)
-  val collides_with_terrain : rect -> level -> hit
-  val stands_on_terrain : rect -> level -> bool
-  val entity_hitbox : entity_state -> rect
+  val collides_with_terrain : Sdl.rect -> level -> hit
+  val stands_on_terrain : Sdl.rect -> level -> bool
+  val entity_hitbox : entity_state -> Sdl.rect
   val cmp_lines : unit -> unit
-  val entity_feet : rect -> point
+  val entity_feet : Sdl.rect -> point
+*)
   
   (*** rendering ***)
-  val draw_background : Sdl.renderer -> Sdl.texture -> rect -> unit
-  val draw_terrain_lines : Sdl.renderer -> level -> rect -> unit
+  val draw_background : Sdl.renderer -> Sdl.texture -> Sdl.rect -> unit
+  val draw_terrain_lines : Sdl.renderer -> level -> Sdl.rect -> unit
   val render_line : Sdl.renderer -> string -> Sdl.font -> int -> unit
-  val draw_entity : Sdl.renderer -> rect -> entity_state -> debug_state -> unit
-  *)
+  val draw_entity : Sdl.renderer -> Sdl.rect -> entity_state -> debug_state -> unit
 
   (*** Json utility ***)
   val get_asset : Json.json -> string -> string
@@ -134,20 +133,19 @@ struct
 
   type point = { x : int, y : int }
   type line = { p : int, a : int, b : int }
-  type rect = { x : int, y : int, w : int, h : int }
   type level = {
     background : Sdl.texture,
-    dim : rect,
+    dim : Sdl.rect,
     vertical : line list,
     horizontal : line list }
 
   type animation_rule = {
     frames : int vector,
     duration : int vector,
-    box : rect }
+    box : Sdl.rect }
 
   type entity_rule = {
-    start_dim : rect,
+    start_dim : Sdl.rect,
     walk_dist : int,
     jump_dist : int * int,
     jump_time : int,
@@ -166,8 +164,8 @@ struct
   type entity_state = {
     active : bool,
     pos : point,
-    hitbox : rect,
-    spawn : rect,
+    hitbox : Sdl.rect,
+    spawn : Sdl.rect,
     dir : dir,
     st : state,
     jump_timeout : int,
@@ -471,6 +469,62 @@ struct
         jump_timeout = #jump_timeout es,
         jump_type = #jump_type es,
         fall_time = #fall_time es }
+
+  (*** rendering ***)
+  fun draw_background r bg screen =
+    Sdl.render_copy r bg (SOME screen) NONE
+
+  fun draw_terrain_lines r lev screen =
+    let
+      val red = { r = 200, g = 20, b = 7, a = 255 }
+      val x = #x screen
+      val y = #y screen
+      fun draw_lines [] _ = ()
+        | draw_lines ({p, a, b}::ls) true =
+          (Sdl.render_draw_line r (a - x) (p - y) (b - x) (p - y);
+          draw_lines ls true)
+        | draw_lines ({p, a, b}::ls) false =
+          (Sdl.render_draw_line r (p - x) (a - y) (p - x) (b - y);
+          draw_lines ls false)
+    in
+      Sdl.set_render_draw_color r red;
+      draw_lines (#horizontal lev) true;
+      draw_lines (#vertical lev) false
+    end
+
+  fun render_line r s font l =
+    let
+      val red = { r = 200, g = 20, b = 7, a = 255 }
+      val black = { r = 0, g = 0, b = 0, a = 180 }
+      val text = Sdl.ttf_render_text_blended font s red
+      val tex = Sdl.create_texture_from_surface r text
+      val dest = { x = 0, y = l * (#h text), w = #w text, h = #h text }
+    in
+      Sdl.free_surface text;
+      Sdl.set_render_draw_color r black;
+      Sdl.set_render_draw_blend_mode r Sdl.Blend_Mode_Blend;
+      Sdl.render_fill_rect r dest;
+      Sdl.render_copy r tex NONE (SOME dest);
+      Sdl.destroy_texture tex
+    end
+
+  fun draw_entity r scr s debug =
+    let
+      val rl = #rule s
+      val w = #w (#start_dim rl)
+      val h = #h (#start_dim rl)
+      val src = {
+        x = (#frame (#anim s)) * #w (#spawn s),
+        y = 0, w = w, h = h }
+      val dst = {
+        x = #x (#pos s) - #x scr,
+        y = #y (#pos s) - #y scr,
+        w = w, h =h }
+      val flip = #dir s = Left
+      val p = { x = 0, y = 0 }
+    in
+      Sdl.render_copy_ex r (#tex s) src dst 0.0 p (if flip then Sdl.Flip_Horizontal else Sdl.Flip_None)
+    end
 end
 
 (* vim: se ai et: *)

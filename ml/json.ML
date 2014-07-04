@@ -106,27 +106,31 @@ struct
 
   val gets = C.get_sym "/usr/lib/libjansson.so"
 
+  val source_size = 160
+  val text_size = 80
+  val int_fields = 3 * (C.sizeof C.Cint)
+
+  fun error_from_c e =
+    { line = C.fromCint (C.offset 0 C.Cint e),
+      column = C.fromCint (C.offset 1 C.Cint e),
+      position = C.fromCint (C.offset 2 C.Cint e),
+      source = C.fromCstring (C.address (C.offset int_fields C.Cchar e)),
+      text = C.fromCstring (C.address (C.offset (int_fields + text_size) C.Cchar e)) }
+
+  fun alloc_error () =
+    C.alloc (int_fields + source_size + text_size) C.Cchar
+
   fun load_file file flags =
     let
       val lower_load =
         C.call3 (gets "json_load_file") (C.STRING, C.INT, C.POINTER) C.POINTER
-      val int_fields = 3 * (C.sizeof C.Cint)
-      val source_size = 160
-      val text_size = 80
-      val err = C.alloc (int_fields + source_size + text_size) C.Cchar
       fun or_flags [] x = x
         | or_flags (f::fs) x = or_flags fs (x + (int_of_parse_flag f))
+      val err = alloc_error ()
       val obj = lower_load (file, (or_flags flags 0), C.address err)
-      val error = {
-        line = C.fromCint (C.offset 0 C.Cint err),
-        column = C.fromCint (C.offset 1 C.Cint err),
-        position = C.fromCint (C.offset 2 C.Cint err),
-        source = C.fromCstring (C.address (C.offset int_fields C.Cchar err)),
-        text = C.fromCstring (C.address (C.offset (int_fields + text_size) C.Cchar err))
-      }
     in
-      if size (#text error) > 0 then
-        raise (Parse_Error error)
+      if C.fromCint obj = 0 then
+        raise Parse_Error (error_from_c err)
       else
         obj
     end
@@ -148,13 +152,13 @@ struct
 
   fun object_get obj key =
     let
-      val low_get = C.call2 (gets "json_object_get") (C.POINTER, C.STRING) C.POINTER
-      val ret = low_get (obj, key)
+      val ret = (C.call2 (gets "json_object_get") (C.POINTER, C.STRING) C.POINTER)
+        (obj, key)
     in
-      if C.fromCint ret <> 0 then
-        SOME ret
-      else
+      if C.fromCint ret = 0 then
         NONE
+      else
+        SOME ret
     end
 
   fun object_set_new obj k v =
