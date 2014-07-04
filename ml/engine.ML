@@ -14,8 +14,8 @@ sig
     horizontal : line list }
 
   type animation_rule = {
-    frames : int list,
-    duration : int list,
+    frames : int vector,
+    duration : int vector,
     box : rect }
 
   type entity_rule = {
@@ -90,12 +90,12 @@ sig
   (*** teardown ***)
   val destroy_level : level -> unit
 
-(*
   (*** state updates ***)
-  val clear_order : entity_event -> entity_event
+  val clear_order : entity_event
   val tick_animation : entity_state -> entity_state
-  val kick_entity : entity_state -> hit -> point -> entity_state
+  val kick_entity : entity_state -> hit list -> point -> entity_state
 
+(*
   (*** movement ***)
   val keystate_to_movement : char vector -> entity_event
   val move_entity : entity_state -> entity_event -> level -> move_log * entity_state
@@ -142,8 +142,8 @@ struct
     horizontal : line list }
 
   type animation_rule = {
-    frames : int list,
-    duration : int list,
+    frames : int vector,
+    duration : int vector,
     box : rect }
 
   type entity_rule = {
@@ -276,7 +276,7 @@ struct
           val (frs, durs) = load_lists (k - 1) [] []
           val box = load_rect (force (Json.object_get obj "box"))
         in
-          { frames = frs, duration = durs, box = box }
+          { frames = Vector.fromList frs, duration = Vector.fromList durs, box = box }
         end
     in
       if (Json.array_size frames) <> (Json.array_size dur) then
@@ -321,7 +321,7 @@ struct
       val siz = force (Json.object_get res "frame_size")
       fun i x = Json.integer_value (Json.array_get siz x)
       val start_dim = { x = 0, y = 0, w = i 0, h = i 1 }
-      val anims = map (fn s => load_anim res n s) state_names
+      val anims = Vector.fromList (map (fn s => load_anim res n s) state_names)
     in
       Json.decref res;
       (t, {
@@ -332,7 +332,7 @@ struct
         fall_dist = #fall_dist er,
         has_gravity = #has_gravity er,
         jump_factor = #jump_factor er,
-        anim = Vector.fromList anims })
+        anim = anims })
     end
 
   fun load_entities root file r =
@@ -359,7 +359,10 @@ struct
     let
       val er = #rule es
       val ar = (Vector.sub (#anim er, int_of_state (#st es)))
-      val anim = { pos = 0, frame = hd (#frames ar), remaining = hd (#duration ar) }
+      val anim = {
+        pos = 0,
+        frame = Vector.sub (#frames ar, 0),
+        remaining = Vector.sub (#duration ar, 0) }
     in {
       active = #active es,
       pos = #pos es,
@@ -413,6 +416,61 @@ struct
 
   (*** teardown ***)
   fun destroy_level l = ()
+
+  (*** state updates ***)
+  val clear_order =
+    { move_left = false, move_right = false, move_jump = false, walk = false }
+
+  fun tick_animation (es:entity_state) =
+    let
+      val a = #anim es
+      val ar = Vector.sub (#anim (#rule es), int_of_state (#st es))
+      val remain = (#remaining a) - 1
+    in
+      if remain < 0 then
+        let
+          val i = (#pos a + 1) mod (Vector.length (#frames ar))
+          val a' = {
+            pos = i,
+            frame = Vector.sub (#frames ar, i),
+            remaining = Vector.sub (#duration ar, i) }
+        in
+          { anim = a',
+            rule = #rule es,
+            tex = #tex es,
+            active = #active es,
+            dir = #dir es,
+            st = #st es,
+            hitbox = #hitbox es,
+            pos = #pos es,
+            spawn = #spawn es,
+            jump_timeout = #jump_timeout es,
+            jump_type = #jump_type es,
+            fall_time = #fall_time es }
+        end
+      else
+        es
+    end
+
+  fun kick_entity es h v =
+    if List.exists (fn x => x = Hit_Top) h then
+      es
+    else if List.exists (fn x => x = Hit_Left) h andalso
+        List.exists (fn x => x = Hit_Right) h then
+      es
+    else
+      { pos = { x = #x (#pos es) + #x v, y = #y (#pos es) + #y v },
+        anim = #anim es,
+        rule = #rule es,
+        tex = #tex es,
+        active = #active es,
+        dir = #dir es,
+        st = #st es,
+        hitbox = #hitbox es,
+        spawn = #spawn es,
+        jump_timeout = #jump_timeout es,
+        jump_type = #jump_type es,
+        fall_time = #fall_time es }
 end
 
 (* vim: se ai et: *)
