@@ -26,8 +26,13 @@ sig
     Encode_Any |
     Escape_Slash
 
+  (** functions **)
   val load_file : string -> parse_flags list -> json
   val dumps : json -> print_flags list -> string
+  val object_get : json -> string -> json option
+  val array_size : json -> int
+  val array_get : json -> int -> json
+  val integer_value : json -> int
 end
 
 structure Json : JSON =
@@ -111,6 +116,30 @@ struct
     in
       low_dumps (obj, or_flags flags 0)
     end
+
+  fun object_get obj key =
+    let
+      val low_get = C.call2 (gets "json_object_get") (C.POINTER, C.STRING) C.POINTER
+      val ret = low_get (obj, key)
+    in
+      if C.fromCint ret <> 0 then
+        SOME ret
+      else
+        NONE
+    end
+
+  fun array_size a =
+    let
+      val low_siz = C.call1 (gets "json_array_size") (C.POINTER) C.INT
+    in
+      low_siz a
+    end
+
+  fun array_get a i =
+    (C.call2 (gets "json_array_get") (C.POINTER, C.INT) C.POINTER) (a, i)
+
+  fun integer_value i =
+    (C.call1 (gets "json_integer_value") C.POINTER C.INT) i
 end
 
 (* vim: se ai et: *)
