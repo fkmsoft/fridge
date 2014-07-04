@@ -75,34 +75,20 @@ struct
 
   val void_p = C.Cpointer C.Cvoid
 
-(* TODO remove
-  val surface_struct = C.Cstruct [
-    C.Cint, (* flags *)
-    void_p, (* pixel format *)
-    C.Cint, C.Cint, (* w, h *)
-    C.Cint, (* pitch *)
-    void_p, (* pixels *)
-    void_p, (* userdata *)
-    C.Cint, (* locked *)
-    void_p, (* lock_data *)
-    C.Cint, C.Cint, C.Cint, C.Cint, (* clip_rect *)
-    void_p, (* blit map *)
-    C.Cint] (* refcount *)
-*)
-
   fun surface_from_c s =
-    { w = C.fromCint (C.offset 2 C.Cint (C.deref s)),
-      h = C.fromCint (C.offset 3 C.Cint (C.deref s)),
-      data = s }
+    if C.fromCint s = 0 then
+      raise Null_Pointer
+    else
+      { w = C.fromCint (C.offset 2 C.Cint (C.deref s)),
+        h = C.fromCint (C.offset 3 C.Cint (C.deref s)),
+        data = s }
 
   fun surface_to_c s = #data s
 
   val SURFACE = C.mkConversion surface_from_c surface_to_c void_p
 
   fun img_load file =
-  let val s = (C.call1 (gets_img "IMG_Load") C.STRING C.POINTER) file
-  in if C.fromCint s = 0 then raise Null_Pointer
-  else surface_from_c s end
+    (C.call1 (gets_img "IMG_Load") C.STRING SURFACE) file
 
   fun create_texture_from_surface r s =
     (C.call2 (gets "SDL_CreateTextureFromSurface") (C.POINTER, SURFACE) C.POINTER)
@@ -130,14 +116,17 @@ struct
     in
       C.assign C.Cint (C.offset 0 C.Cint cp) x;
       C.assign C.Cint (C.offset 1 C.Cint cp) y;
-      cp
+      C.address cp
     end
 
-  fun point_from_c cp =
-    { x = C.fromCint (C.offset 0 C.Cint cp),
-      y = C.fromCint (C.offset 1 C.Cint cp) }
+  fun point_from_c p =
+    if C.fromCint p = 0 then
+      raise Null_Pointer
+    else
+      { x = C.fromCint (C.offset 0 C.Cint (C.deref p)),
+        y = C.fromCint (C.offset 1 C.Cint (C.deref p)) }
 
-  val POINT = C.mkConversion point_from_c point_to_c (C.Cstruct [C.Cint, C.Cint])
+  val POINT = C.mkConversion point_from_c point_to_c void_p
 
   fun rect_to_c r =
     let
@@ -151,16 +140,19 @@ struct
       C.assign C.Cint (C.offset 1 C.Cint cr) y;
       C.assign C.Cint (C.offset 2 C.Cint cr) w;
       C.assign C.Cint (C.offset 3 C.Cint cr) h;
-      cr
+      C.address cr
     end
 
   fun rect_from_c r =
-    { x = C.fromCint (C.offset 0 C.Cint r),
-      y = C.fromCint (C.offset 1 C.Cint r),
-      w = C.fromCint (C.offset 2 C.Cint r),
-      h = C.fromCint (C.offset 3 C.Cint r) }
+    if C.fromCint r = 0 then
+      raise Null_Pointer
+    else
+      { x = C.fromCint (C.offset 0 C.Cint (C.deref r)),
+        y = C.fromCint (C.offset 1 C.Cint (C.deref r)),
+        w = C.fromCint (C.offset 2 C.Cint (C.deref r)),
+        h = C.fromCint (C.offset 3 C.Cint (C.deref r)) }
 
-  val RECT = C.mkConversion rect_from_c rect_to_c (C.Cstruct [C.Cint, C.Cint, C.Cint, C.Cint])
+  val RECT = C.mkConversion rect_from_c rect_to_c void_p
 
   fun render_draw_line r x1 y1 x2 y2 =
     (C.call5 (gets "SDL_RenderDrawLine") (C.POINTER, C.INT, C.INT, C.INT, C.INT) C.VOID)
