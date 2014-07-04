@@ -9,8 +9,8 @@ sig
   type level = {
     background : Sdl.texture,
     dim : Sdl.rect,
-    vertical : line list,
-    horizontal : line list }
+    vertical : line vector,
+    horizontal : line vector }
 
   type animation_rule = {
     frames : int vector,
@@ -98,6 +98,7 @@ sig
   (*** movement ***)
   val keystate_to_movement : char vector -> entity_event
   val move_entity : entity_state -> entity_event -> level -> move_log * entity_state
+*)
 
   (*** collision ***)
   val collides_with_terrain : Sdl.rect -> level -> hit
@@ -105,7 +106,6 @@ sig
   val entity_hitbox : entity_state -> Sdl.rect
   val cmp_lines : unit -> unit
   val entity_feet : Sdl.rect -> point
-*)
   
   (*** rendering ***)
   val draw_background : Sdl.renderer -> Sdl.texture -> Sdl.rect -> unit
@@ -136,8 +136,8 @@ struct
   type level = {
     background : Sdl.texture,
     dim : Sdl.rect,
-    vertical : line list,
-    horizontal : line list }
+    vertical : line vector,
+    horizontal : line vector }
 
   type animation_rule = {
     frames : int vector,
@@ -470,6 +470,118 @@ struct
         jump_type = #jump_type es,
         fall_time = #fall_time es }
 
+  (*** collision ***)
+  fun first_idx vec x = 0 (* TODO *)
+
+  fun between x a b =
+    x >= a andalso x <= b
+
+  fun pt_on_line p l =
+    (#y p = #p l) andalso (between (#x p) (#a l) (#b l))
+
+  fun entity_feet r =
+    { x = (#x r + #w r) div 2,
+      y = #y r + #h r }
+
+  fun bsearch v (fail:'a) start limit pred : 'a =
+    let
+      exception Bsearch_Found of 'a
+      fun iter i =
+        if i <= Vector.length v andalso
+            not (limit (Vector.sub (v, i))) then
+          case pred (Vector.sub (v, i)) of
+            SOME r => raise Bsearch_Found r |
+            NONE => iter (i + 1)
+        else
+          fail
+    in
+      iter start handle Bsearch_Found r => r
+    end
+
+  fun intersects_x { a, b, p } { x, y, w, h } = 
+    let
+      val x1 = x
+      val xm = x + (w div 2)
+      val x2 = x + w
+      val y1 = y
+      val y2 = y + h
+    in
+      if (between p y1 y2) andalso
+          ((between x1 a b) orelse (between xm a b) orelse
+           (between a x1 xm) orelse (between b x2 xm)) then
+        SOME Hit_Left
+      else if (between p y1 y2) andalso
+          ((between xm a b) orelse (between x2 a b) orelse
+           (between a x1 x2) orelse (between b x1 x2)) then
+        SOME Hit_Right
+      else
+        NONE
+    end
+
+  fun intersects_y { a, b, p } { x, y, w, h } = 
+    let
+      val x1 = x
+      val xm = x + (w div 2)
+      val x2 = x + w
+      val y1 = y
+      val y2 = y + h
+    in
+      if (between p x1 xm) andalso
+          ((between y1 a b) orelse (between y2 a b) orelse
+           (between a y1 y2) orelse (between b y1 y2)) then
+        SOME Hit_Left
+      else if (between p xm x2) andalso
+          ((between y1 a b) orelse (between y2 a b) orelse
+           (between a y1 y2) orelse (between b y1 y2)) then
+        SOME Hit_Right
+      else
+        NONE
+    end
+
+  fun collides_with_terrain { x, y, w, h } lev =
+    let
+      val hb = { x = x - 1, y = y, w = w, h = h }
+      val hor = #horizontal lev
+      val ver = #vertical lev
+      val hit_hor = bsearch hor Hit_None (first_idx hor y)
+          (fn x => #p x <= y + h)
+          (fn x => intersects_x x hb)
+    in
+      case hit_hor of
+        Hit_None =>
+          bsearch ver Hit_None (first_idx ver x)
+              (fn u => #p u <= x + w)
+              (fn x => intersects_y x hb) |
+        h => h
+    end
+
+  fun stands_on_terrain r t =
+    let
+      val mid = entity_feet r
+      val mid_y = #y mid
+      val v = #horizontal t
+    in
+      bsearch v false (first_idx v mid_y)
+          (fn x => #p x <= mid_y)
+          (fn x => if pt_on_line mid x then SOME true
+            else NONE)
+    end
+
+  fun entity_hitbox s =
+    let
+      val x = #x (#pos s)
+      val y = #y (#pos s) + #y (#hitbox s)
+      val w = #w (#hitbox s)
+      val h = #h (#hitbox s)
+      val xoff = case #dir s of
+        Left => #x (#hitbox s) |
+        Right => #w (#spawn s) - (#x (#hitbox s)) - (#w (#hitbox s))
+    in
+      { x = x + xoff, y = y, w = w, h = h }
+    end
+
+  fun cmp_lines () = ()
+
   (*** rendering ***)
   fun draw_background r bg screen =
     Sdl.render_copy r bg (SOME screen) NONE
@@ -479,17 +591,14 @@ struct
       val red = { r = 200, g = 20, b = 7, a = 255 }
       val x = #x screen
       val y = #y screen
-      fun draw_lines [] _ = ()
-        | draw_lines ({p, a, b}::ls) true =
-          (Sdl.render_draw_line r (a - x) (p - y) (b - x) (p - y);
-          draw_lines ls true)
-        | draw_lines ({p, a, b}::ls) false =
-          (Sdl.render_draw_line r (p - x) (a - y) (p - x) (b - y);
-          draw_lines ls false)
+      fun draw_horizontal {p, a, b} =
+          Sdl.render_draw_line r (a - x) (p - y) (b - x) (p - y)
+      fun draw_vertical {p, a, b} =
+          Sdl.render_draw_line r (p - x) (a - y) (p - x) (b - y)
     in
       Sdl.set_render_draw_color r red;
-      draw_lines (#horizontal lev) true;
-      draw_lines (#vertical lev) false
+      Vector.app draw_vertical (#vertical lev);
+      Vector.app draw_horizontal (#horizontal lev)
     end
 
   fun render_line r s font l =
