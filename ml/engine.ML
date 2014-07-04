@@ -43,6 +43,7 @@ sig
     dir : dir,
     st : state,
     jump_timeout : int,
+    jump_type : jump_type,
     fall_time : int,
     anim : animation_state,
     rule : entity_rule,
@@ -80,10 +81,10 @@ sig
   val load_anim : Json.json -> string -> string -> animation_rule
   val load_asset_tex : Json.json -> string -> Sdl.renderer -> string -> Sdl.texture
   val load_entity_rule : Json.json -> string -> entity_rule
-  val load_entities : string -> string -> Sdl.renderer -> (Sdl.texture list * entity_rule list * Json.json)
+  val load_entities : string -> string -> Sdl.renderer -> (Sdl.texture * entity_rule) list
   val load_entity_resource : Json.json -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
   val load_state : entity_state -> entity_state
-  val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> animation_state -> entity_state
+  val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> state -> entity_state
   val clear_debug : debug_state -> debug_state
 
   (*** teardown ***)
@@ -125,8 +126,7 @@ sig
   val set_path : unit -> unit
 end
 
-(*structure Engine : ENGINE =*)
-structure Engine =
+structure Engine : ENGINE =
 struct
   datatype dir = Left | Right
   datatype hit = Hit_None | Hit_Top | Hit_Left | Hit_Right | Hit_Bot
@@ -151,6 +151,7 @@ struct
     walk_dist : int,
     jump_dist : int * int,
     jump_time : int,
+    jump_factor : real * real,
     fall_dist : int,
     has_gravity : bool,
     anim : animation_rule vector }
@@ -170,6 +171,7 @@ struct
     dir : dir,
     st : state,
     jump_timeout : int,
+    jump_type : jump_type,
     fall_time : int,
     anim : animation_state,
     rule : entity_rule,
@@ -355,8 +357,9 @@ struct
 
   fun load_state es =
     let
-      val er = (#rule es):entity_rule
-      val ar = Vector.sub (#anim er, int_of_state (#st es))
+      val er = #rule es
+      val ar = (Vector.sub (#anim er, int_of_state (#st es)))
+      val anim = { pos = 0, frame = hd (#frames ar), remaining = hd (#duration ar) }
     in {
       active = #active es,
       pos = #pos es,
@@ -367,30 +370,33 @@ struct
       jump_type = #jump_type es,
       fall_time = #fall_time es,
       tex = #tex es,
-      anim = {
-        pos = 0, frame = hd (#frames ar), remaining = hd (#duration ar) },
+      rule = er,
+      anim = anim,
       hitbox = #box ar }
     end
 
-  (* FIXME sig *)
-  fun init_entity_state (es:entity_state) er t st =
+  fun init_entity_state es er t st =
     let
       val sd = case er of
-        SOME r => (#start_dim r):rect |
-        NONE => (#spawn es):rect
+        SOME r => (#start_dim r) |
+        NONE => (#spawn es)
       val w = #w sd
       val h = #h sd
+      val rule = case er of
+          SOME r => r |
+          NONE => #rule es
+      val tex = case t of
+          SOME te => te |
+          NONE => #tex es
     in
       load_state {
-        rule = case er of
-          SOME r => r |
-          NONE => #rule es,
-        tex = case t of
-          SOME te => te |
-          NONE => #tex es,
+        rule = rule,
+        tex = tex,
         active = true,
+        anim = #anim es,
         dir = Left,
         st = st,
+        hitbox = #hitbox es,
         pos = { x = #x (#spawn es), y = #y (#spawn es) },
         spawn = { x = #x (#spawn es), y = #y (#spawn es),
           w = w, h = h },
@@ -399,8 +405,7 @@ struct
         fall_time = 0 }
     end
 
-  (* FIXME sig *)
-  fun clear_debug (s:debug_state) =
+  fun clear_debug s =
     { active = false, pause = false, frames = true,
       hitboxes = true, show_terrain_collision = false, message_positions = true,
       font = #font s,
