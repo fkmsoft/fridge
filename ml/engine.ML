@@ -94,11 +94,9 @@ sig
   val tick_animation : entity_state -> entity_state
   val kick_entity : entity_state -> hit list -> point -> entity_state
 
-(*
   (*** movement ***)
-  val keystate_to_movement : char vector -> entity_event
+  val keystate_to_movement : Sdl.key list -> entity_event
   val move_entity : entity_state -> entity_event -> level -> move_log * entity_state
-*)
 
   (*** collision ***)
   val collides_with_terrain : Sdl.rect -> level -> hit
@@ -130,6 +128,9 @@ struct
   datatype dir = Left | Right
   datatype hit = Hit_None | Hit_Top | Hit_Left | Hit_Right | Hit_Bot
   datatype state = Idle | Walk | Fall | Jump | Hang
+
+  fun int_of_dir Left = ~1
+    | int_of_dir Right = 1
 
   type point = { x : int, y : int }
   type line = { p : int, a : int, b : int }
@@ -581,6 +582,284 @@ struct
     end
 
   fun cmp_lines () = ()
+
+  (*** movement ***)
+  fun keystate_to_movement keys =
+    let
+      fun match_keys (Key_Left::ks) { move_left, move_right, walk, move_jump } =
+        match_keys ks { move_left = true, walk = true, move_right = move_right, move_jump = move_jump }
+        | match_keys (Key_Right::ks) { move_left, move_right, walk, move_jump } =
+        match_keys ks { move_right = true, walk = true, move_left = move_left, move_jump = move_jump }
+        | match_keys (Key_Space::ks) { move_left, move_right, walk, move_jump } =
+        match_keys ks { move_jump = true, move_left = move_left, move_right = move_right, walk = walk }
+        | match_keys (_::ks) ev =
+          match_keys ks ev
+        | match_keys [] ev = ev
+    in
+      match_keys keys clear_order
+    end
+
+  fun sign x = if x < 0 then ~1 else 1
+
+  fun entity_vector_move e { x, y } terrain grav =
+    let
+      exception Break of int * int
+      val n = entity_hitbox e
+      val dirx = sign x
+      val diry = sign y
+      val vx = dirx * x
+      val vy = diry * y
+      val vmax = if vx > vy then vx else vy
+      fun iter i out =
+        if i <= vmax then
+          let
+            val dx = dirx * (i * vx) div vmax
+            val dy = diry * (i * vy) div vmax
+            val r = {
+              x = (#x n) + dx,
+              y = (#y n) + dy,
+              w = #w n, h = #h n }
+            val h = collides_with_terrain r terrain
+          in
+            if h <> Hit_None then
+              raise Break out
+            else if grav andalso not (stands_on_terrain r terrain) then
+              raise Break out
+              (* TODO or kick *)
+            else
+              iter (i + 1) (dx, dy)
+          end
+        else
+          out
+      val (dx, dy) = iter 1 (0, 0) handle Break out => out
+    in
+      ((dx, dy),
+          { anim = #anim e,
+            rule = #rule e,
+            tex = #tex e,
+            active = #active e,
+            dir = #dir e,
+            st = #st e,
+            hitbox = #hitbox e,
+            pos = { x = dx + #x (#pos e), y = dy + #y (#pos e) },
+            spawn = #spawn e,
+            jump_timeout = #jump_timeout e,
+            jump_type = #jump_type e,
+            fall_time = #fall_time e })
+    end
+
+  (* TODO sig *)
+  fun entity_walk (e:entity_state) terrain =
+    let
+      val r = #rule e
+      val v = { x = (int_of_dir (#dir e)) * (#walk_dist r), y = 0 }
+      val ((x, y), e') = entity_vector_move e v terrain (#has_gravity r)
+      val dist = if x < 0 then ~x else x
+    in
+      (dist, e')
+    end
+
+  fun entity_start_jump (e:entity_state) terrain t =
+    let
+      val e' = {
+            jump_timeout = #jump_time (#rule e),
+            jump_type = t,
+            anim = #anim e,
+            rule = #rule e,
+            tex = #tex e,
+            active = #active e,
+            dir = #dir e,
+            st = #st e,
+            hitbox = #hitbox e,
+            pos = #pos e,
+            spawn = #spawn e,
+            fall_time = #fall_time e }
+    in
+      entity_jump e' terrain (t = Jump_Wide) true
+    end
+  and entity_jump (e:entity_state) terrain walk jump =
+    let
+      val jumping = (#jump_timeout e) > 0
+      fun do_jump r =
+        let
+          val (jx, jy) = #jump_dist r
+          val x = (int_of_dir (#dir e)) *
+              (if #jump_type e = Jump_Wide then jx
+              else if #has_gravity r then 0
+              else if walk then #walk_dist r
+              else 0)
+          val y = ~1 * (jy + (if #has_gravity r then #jump_timeout e else 0))
+          val ((dx, dy), e') = entity_vector_move e { x = x, y = y } terrain false
+          val timeout = if dy <> y then 0 else (#jump_timeout e) - 1
+        in
+          (~dy, {
+            jump_timeout = timeout,
+            jump_type = #jump_type e,
+            anim = #anim e,
+            rule = #rule e,
+            tex = #tex e,
+            active = #active e,
+            dir = #dir e,
+            st = #st e,
+            hitbox = #hitbox e,
+            pos = #pos e,
+            spawn = #spawn e,
+            fall_time = #fall_time e })
+        end
+    in
+      if jumping then
+        do_jump (#rule e)
+      else if #has_gravity (#rule e) then
+        (0, e)
+      else if jump then
+        entity_start_jump e terrain Jump_High
+      else
+        (0, e)
+    end
+
+  fun entity_fall (e:entity_state) terrain walk =
+    let
+      val fall_time = #fall_time e + 1
+      fun pre_fall y = entity_vector_move e { x = 0, y = y } terrain false
+      fun real_fall e y_extra =
+        let
+          val r = #rule e
+          val x = if walk then int_of_dir (#dir e) * (#walk_dist r) else 0
+          val y = #fall_dist r + y_extra
+        in
+          entity_vector_move e { x = x, y = y } terrain false
+        end
+    in
+      if #has_gravity (#rule e) then
+        let val ((dx, dy), e') = pre_fall 1
+        in if (dy <> 1) then
+          (0, {
+              fall_time = 0,
+              jump_timeout = #jump_timeout e,
+              jump_type = #jump_type e,
+              anim = #anim e,
+              rule = #rule e,
+              tex = #tex e,
+              active = #active e,
+              dir = #dir e,
+              st = #st e,
+              hitbox = #hitbox e,
+              pos = #pos e,
+              spawn = #spawn e })
+        else
+          let val ((dx, dy), e'') = real_fall e' fall_time
+          in (dy, {
+              fall_time = fall_time,
+              jump_timeout = #jump_timeout e'',
+              jump_type = #jump_type e'',
+              anim = #anim e'',
+              rule = #rule e'',
+              tex = #tex e'',
+              active = #active e'',
+              dir = #dir e'',
+              st = #st e'',
+              hitbox = #hitbox e'',
+              pos = #pos e'',
+              spawn = #spawn e'' })
+          end
+        end
+      else
+        let val ((dx, dy), e') = real_fall e 0
+        in (dy, {
+            fall_time = fall_time,
+            jump_timeout = #jump_timeout e',
+            jump_type = #jump_type e',
+            anim = #anim e',
+            rule = #rule e',
+            tex = #tex e',
+            active = #active e',
+            dir = #dir e',
+            st = #st e',
+            hitbox = #hitbox e',
+            pos = #pos e',
+            spawn = #spawn e' })
+        end
+    end
+
+  fun move_entity e ev lvl =
+    let
+      val dir = if #move_left ev then Left
+        else if #move_right ev then Right
+        else #dir e
+      fun turn e dir = {
+        dir = dir,
+        st = #st e,
+        fall_time = #fall_time e,
+        jump_timeout = #jump_timeout e,
+        jump_type = #jump_type e,
+        anim = #anim e,
+        rule = #rule e,
+        tex = #tex e,
+        active = #active e,
+        hitbox = #hitbox e,
+        pos = #pos e,
+        spawn = #spawn e }
+      fun walk () =
+        if #move_jump ev then
+          let val (j, e') = entity_start_jump (turn e dir) lvl (if #walk ev andalso #has_gravity (#rule e) then Jump_Wide else Jump_High)
+          in ((0,j,0), e') end
+        else
+          let val (w, e') = entity_walk (turn e dir) lvl
+          in ((w,0,0), e') end
+      fun move_by_state Idle = walk ()
+        | move_by_state Walk = walk ()
+        | move_by_state Hang = ((0,0,0), e)
+        | move_by_state Jump =
+          let val (j, e') = entity_jump (turn e dir) lvl (#walk ev) (#move_jump ev)
+          in ((0,j,0), e') end
+        | move_by_state Fall =
+          if (#has_gravity (#rule e)) then
+            let
+              val (f, e') = entity_fall (turn e dir) lvl (#walk ev)
+              val h = entity_hitbox e'
+            in if f = 0 andalso not (stands_on_terrain h lvl) then
+              ((0,0,f), kick_entity e' [(collides_with_terrain { x = #x h, y = 1 + #y h, w = #w h, h = #h h } lvl)] { x = ~1, y = 0 })
+            else
+              ((0,0,f), e')
+            end
+          else
+            if #move_jump ev then
+              let val (j, e') = entity_start_jump (turn e dir) lvl Jump_High
+              in ((0,j,0), e') end
+            else if #walk ev then
+              let
+                val (w, e') = entity_walk (turn e dir) lvl
+                val (f, e'') = entity_fall e' lvl false
+              in ((w,0,f), e'') end
+            else
+              let val (f, e') = entity_fall (turn e dir) lvl false
+              in ((0,0,f), e') end
+      val ((w,j,f), e') = move_by_state (#st e)
+      val st_next =
+        if j > 0 then Jump
+        else if stands_on_terrain (entity_hitbox e') lvl then
+          if w > 0 then Walk
+          else Idle
+        else Fall
+    in
+      ({walked = w,
+        jumped = j,
+        fallen = f,
+        hang = false,
+        turned = dir <> #dir e},
+       {st = st_next,
+        fall_time = #fall_time e',
+        jump_timeout = #jump_timeout e',
+        jump_type = #jump_type e',
+        anim = #anim e',
+        rule = #rule e',
+        tex = #tex e',
+        active = #active e',
+        dir = #dir e',
+        hitbox = #hitbox e',
+        pos = #pos e',
+        spawn = #spawn e' })
+    end
 
   (*** rendering ***)
   fun draw_background r bg screen =

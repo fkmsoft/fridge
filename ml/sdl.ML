@@ -14,6 +14,8 @@ sig
   type surface = { w : int, h : int, data : CInterface.vol }
 
   (*** constants ***)
+  datatype key = Key_Left | Key_Right | Key_Space
+
   datatype renderer_flip = Flip_None | Flip_Horizontal | Flip_Vertical
   val int_of_flip : renderer_flip -> int
 
@@ -59,6 +61,8 @@ struct
   val gets = C.get_sym "/usr/lib/libSDL2.so"
   val gets_img = C.get_sym "/usr/lib/libSDL2_image.so"
   val gets_ttf = C.get_sym "/usr/lib/libSDL2_ttf.so"
+
+  datatype key = Key_Left | Key_Right | Key_Space
 
   datatype renderer_flip = Flip_None | Flip_Horizontal | Flip_Vertical
   fun int_of_flip Flip_None = 0
