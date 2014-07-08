@@ -110,7 +110,7 @@ sig
   val draw_background : Sdl.renderer -> Sdl.texture -> Sdl.rect -> unit
   val draw_terrain_lines : Sdl.renderer -> level -> Sdl.rect -> unit
   val render_line : Sdl.renderer -> string -> Sdl.font -> int -> unit
-  val draw_entity : Sdl.renderer -> Sdl.rect -> entity_state -> debug_state -> unit
+  val draw_entity : Sdl.renderer -> Sdl.rect -> entity_state -> debug_state option -> unit
 
   (*** Json utility ***)
   val get_asset : Json.t -> string -> string

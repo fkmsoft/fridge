@@ -38,7 +38,7 @@ sig
     logo : Engine.entity_state,
     intro : Engine.entity_state,
     entities : Engine.entity_state vector vector,
-    msg : message,
+    msg : message option,
     msg_timeout : int,
     run : mode,
     debug : Engine.debug_state }
@@ -59,6 +59,7 @@ sig
   val rootvar : string
   val game_conf : string
   val string_of_frq : msg_frequency -> string
+  val int_of_group : group -> int
 
 (*
   (*** functions ***)
@@ -67,15 +68,6 @@ sig
   val load_config : Json.t -> string -> (session * game_state)
   val load_intro : session -> Json.t -> string -> Engine.entity_rule -> Sdl.texture vector -> Engine.entity_state
   val init_group : Json.t -> Json.t -> string -> Sdl.texture vector -> Engine.entity_rule vector -> Engine.state -> Engine.entity_state vector
-
-  (** high level game **)
-  val process_event : Sdl.event -> game_event
-  val update_gamestate : session -> game_event -> game_state -> game_state
-  val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
-  val enemy_movement : Engine.level -> Engine.entity_state -> Engine.entity_state vector -> Engine.entity_state vector
-  val render : session -> game_state -> unit
-  val clear_game : game_state
-  val clear_event : game_event
 *)
 
   (** collisions **)
@@ -87,6 +79,17 @@ sig
   val draw_message_boxes : Sdl.renderer -> message vector -> Sdl.rect -> unit
   val render_entity_info : Sdl.renderer -> Sdl.font -> Engine.entity_state -> unit
   val draw_message : Sdl.renderer -> Sdl.texture -> message -> Sdl.rect -> Sdl.rect -> unit
+
+  (** high level game **)
+(*
+  val process_event : Sdl.event -> game_event
+  val update_gamestate : session -> game_event -> game_state -> game_state
+  val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
+  val enemy_movement : Engine.level -> Engine.entity_state -> Engine.entity_state vector -> Engine.entity_state vector
+  *)
+  val render : session -> game_state -> unit
+  val clear_game : game_state -> game_state
+  val clear_event : game_event
 
   (** utility **)
   val load_finish : session -> Json.t -> Sdl.font -> int -> finish
@@ -137,7 +140,7 @@ struct
     logo : Engine.entity_state,
     intro : Engine.entity_state,
     entities : Engine.entity_state vector vector,
-    msg : message,
+    msg : message option,
     msg_timeout : int,
     run : mode,
     debug : Engine.debug_state }
@@ -162,9 +165,12 @@ struct
     | string_of_frq Msg_Never = "never"
     | string_of_frq Msg_Once = "once"
 
+  fun int_of_group Group_Objects = 0
+    | int_of_group Group_Enemies = 1
+    | int_of_group Group_Player = 2
+
   (*** functions ***)
   (** high level init **)
-  (** high level game **)
 
   (** collisions **)
   fun in_rect p r =
@@ -255,6 +261,63 @@ struct
       Vector.foldl draw_line y (#lines m);
       ()
     end
+
+  (** high level game **)
+  fun render s gs =
+    let
+      val player = Vector.sub (Vector.sub (#entities gs, int_of_group Group_Player), 0)
+      val pos = #pos player
+      val spawn = #spawn player
+      val screen = {
+        x = (#x pos) - ((#x (#screen s)) - #w spawn) div 2,
+        y = (#y pos) - ((#y (#screen s)) - #h spawn) div 2,
+        w = #x (#screen s),
+        h = #y (#screen s) }
+      val scr = { x = 0, y = 0, w = #w screen, h = #h screen }
+      val r = #r s
+      fun render_mode Mode_Logo = E.draw_entity r scr (#logo gs) NONE
+        | render_mode Mode_Intro = E.draw_entity r scr (#intro gs) NONE
+        | render_mode Mode_Game =
+          let
+            val msg = #msg s
+          in
+            E.draw_background r (#background (#level s)) screen;
+            Vector.app (fn g =>
+              Vector.app (fn e =>
+                if #active e then
+                  E.draw_entity r screen e (SOME (#debug gs))
+                else ()) g) (#entities gs);
+            E.draw_entity r screen player (SOME (#debug gs));
+            case #msg gs of
+              SOME m => draw_message r (#tex msg) m (#box msg) (#line msg) |
+              NONE => ()
+           end
+        | render_mode Mode_Exit = print "bye\n"
+    in
+      Sdl.render_clear r;
+      render_mode (#run gs);
+      Sdl.render_present r
+    end
+
+  fun clear_game gs = {
+    need_to_collect = Vector.length (Vector.sub (#entities gs, int_of_group Group_Objects)),
+    logo = #logo gs,
+    intro = #intro gs,
+    entities = #entities gs,
+    msg = NONE,
+    msg_timeout = 0,
+    run = #run gs,
+    debug = E.clear_debug (#debug gs) }
+
+  val clear_event = {
+    player = E.clear_order,
+    exit = false,
+    toggle_debug = false,
+    toggle_pause = false,
+    toggle_terrain = false,
+    reload_conf = false,
+    keyboard = false,
+    reset = false }
 
   (** utility **)
   fun load_finish s game font fontsize =

@@ -754,7 +754,7 @@ static void clear_event(game_event *ev)
 	ev->toggle_terrain = SDL_FALSE;
 	ev->reload_conf = SDL_FALSE;
 	ev->keyboard = SDL_FALSE;
-	ev->reset =SDL_FALSE;
+	ev->reset = SDL_FALSE;
 }
 
 /* collisions */

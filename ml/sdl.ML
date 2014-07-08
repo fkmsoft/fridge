@@ -32,8 +32,12 @@ sig
   val destroy_texture : texture -> unit
 
   (** rendering **)
+  val render_clear : renderer -> unit
+  val render_present : renderer -> unit
+
   val set_render_draw_color : renderer -> color -> unit
   val set_render_draw_blend_mode : renderer -> blend_mode -> unit
+
   val render_draw_line : renderer -> int -> int -> int -> int -> unit
   val render_draw_rect : renderer -> rect -> unit
   val render_fill_rect : renderer -> rect -> unit
@@ -108,6 +112,12 @@ struct
 
   fun destroy_texture t =
     (C.call1 (gets "SDL_DestroyTexture") C.POINTER C.VOID) t
+
+  fun render_clear r =
+    (C.call1 (gets "SDL_RenderClear") C.POINTER C.VOID) r
+
+  fun render_present r =
+    (C.call1 (gets "SDL_RenderPresent") C.POINTER C.VOID) r
 
   fun set_render_draw_color rend { r, g, b, a } =
     (C.call5 (gets "SDL_SetRenderDrawColor") (C.POINTER, C.INT, C.INT, C.INT, C.INT) C.VOID)
