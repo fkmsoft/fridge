@@ -11,6 +11,7 @@ sig
 
   exception Parse_Error of error
   exception Invalid_Indent of int
+  exception Key_Error of string
 
   datatype parse_flags =
     Reject_Duplicates |
@@ -36,7 +37,8 @@ sig
 
   (* objects *)
   val object_size : t -> int
-  val object_get : t -> string -> t option
+  val object_find : t -> string -> t option
+  val object_get : t -> string -> t
   val object_set_new : t -> string -> t -> unit
 
   val object_iter : t -> iter
@@ -49,6 +51,7 @@ sig
   (* arrays *)
   val array_size : t -> int
   val array_get : t -> int -> t
+  val array_foreach : t -> (t -> int -> 'a) -> 'a vector
 
   (* primitives *)
   val integer : int -> t
@@ -71,6 +74,8 @@ struct
     text : string }
 
   exception Parse_Error of error
+  exception Invalid_Indent of int
+  exception Key_Error of string
 
   datatype parse_flags =
     Reject_Duplicates |
@@ -87,8 +92,6 @@ struct
     Encode_Any |
     Escape_Slash
   
-  exception Invalid_Indent of int
-
   fun int_of_parse_flag Reject_Duplicates = 0x1
     | int_of_parse_flag Disable_Eof_Check = 0x2
     | int_of_parse_flag Decode_Any = 0x4
@@ -156,10 +159,13 @@ struct
         (obj, key)
     in
       if C.fromCint ret = 0 then
-        NONE
+        raise Key_Error key
       else
-        SOME ret
+        ret
     end
+
+  fun object_find obj key =
+    SOME (object_get obj key) handle Key_Error s => NONE
 
   fun object_set_new obj k v =
     (C.call3 (gets "json_object_set_new") (C.POINTER, C.STRING, C.POINTER) C.VOID)
@@ -200,6 +206,9 @@ struct
 
   fun array_get a i =
     (C.call2 (gets "json_array_get") (C.POINTER, C.INT) C.POINTER) (a, i)
+
+  fun array_foreach a f =
+    Vector.tabulate (array_size a, fn i => f (array_get a i) i)
 
   fun integer i =
     (C.call1 (gets "json_integer") C.INT C.POINTER) i

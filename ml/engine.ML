@@ -211,18 +211,13 @@ struct
   (*** Json utility ***)
   exception Load_Err
 
-  fun force option =
-    case option of
-      SOME v => v |
-      NONE => raise Load_Err
-
   fun get_asset a k =
-    Json.string_value (force (Json.object_get a k))
+    Json.string_value (Json.object_get a k)
 
   exception Custom
 
   fun get_int_field obj n s =
-    case Json.object_get obj s of
+    case Json.object_find obj s of
       SOME v => Json.integer_value v |
       NONE =>
         if s = "custom-rule" then
@@ -231,7 +226,7 @@ struct
           raise Load_Err
 
   fun get_float_field obj n s =
-    case Json.object_get obj s of
+    case Json.object_find obj s of
       SOME v => Json.real_value v |
       NONE =>
         if s = "custom-rule" then
@@ -255,9 +250,9 @@ struct
   (*** loading ***)
   fun load_anim src name key =
     let
-      val obj = force (Json.object_get src key)
-      val frames = force (Json.object_get obj "frames")
-      val dur = force (Json.object_get obj "duration")
+      val obj = Json.object_get src key
+      val frames = Json.object_get obj "frames"
+      val dur = Json.object_get obj "duration"
       fun load_lists i frs durs =
         if i >= 0 then
           let
@@ -277,7 +272,7 @@ struct
         let
           val k = Json.array_size frames
           val (frs, durs) = load_lists (k - 1) [] []
-          val box = load_rect (force (Json.object_get obj "box"))
+          val box = load_rect (Json.object_get obj "box")
         in
           { frames = Vector.fromList frs, duration = Vector.fromList durs, box = box }
         end
@@ -306,7 +301,7 @@ struct
       jump_time = i "jump-time",
       fall_dist = i "fall-dist",
       jump_factor = (f "wide-jump-factor", f "high-jump-factor"),
-      has_gravity = case Json.object_get src "has-gravity" of
+      has_gravity = case Json.object_find src "has-gravity" of
         SOME s => Json.string_value s = "yes" |
         NONE => true,
       anim = Vector.fromList [],
@@ -315,13 +310,13 @@ struct
 
   fun load_entity_resource src n r root =
     let
-      val obj = force (Json.object_get src "resource")
+      val obj = Json.object_get src "resource"
       val ps = Json.string_value obj
       val path = root ^ "/" ^ conf_dir ^ "/" ^ ps
       val er = load_entity_rule src n
       val res = Json.load_file path []
       val t = load_asset_tex res root r "asset"
-      val siz = force (Json.object_get res "frame_size")
+      val siz = Json.object_get res "frame_size"
       fun i x = Json.integer_value (Json.array_get siz x)
       val start_dim = { x = 0, y = 0, w = i 0, h = i 1 }
       val states = [Idle, Walk, Jump, Fall, Hang]
