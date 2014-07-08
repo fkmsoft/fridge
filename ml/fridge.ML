@@ -84,11 +84,9 @@ sig
 
   (** rendering **)
   val render_message : Sdl.renderer -> Sdl.font -> Json.t -> int -> msg_line vector
-(*
-  val draw_message_boxes : Sdl.renderer -> msg_info -> Sdl.rect -> unit
+  val draw_message_boxes : Sdl.renderer -> message vector -> Sdl.rect -> unit
   val render_entity_info : Sdl.renderer -> Sdl.font -> Engine.entity_state -> unit
   val draw_message : Sdl.renderer -> Sdl.texture -> message -> Sdl.rect -> Sdl.rect -> unit
-*)
 
   (** utility **)
   val load_finish : session -> Json.t -> Sdl.font -> int -> finish
@@ -168,6 +166,7 @@ struct
   (** high level init **)
   (** high level game **)
   (** collisions **)
+
   (** rendering **)
   fun render_message r font m offset =
     let
@@ -184,6 +183,62 @@ struct
         end
     in
       Vector.tabulate (msg_lines, render_line)
+    end
+
+  fun draw_message_boxes r msgs screen =
+    let
+      fun draw msg =
+        let
+          val light_green = { r = 23, g = 225, b = 38, a = 255 }
+          val dark_green = { r = 0, g = 100, b = 0, a = 255 }
+          val (fill, col) = case #when msg of
+            Msg_Always => (true, light_green) |
+            Msg_Never => (false, dark_green) |
+            Msg_Once => (true, dark_green)
+          val a = 4
+          val b = {
+            x = #x (#pos msg) - (a div 2) - #x screen,
+            y = #y (#pos msg) - (a div 2) - #y screen,
+            w = a, h = a }
+        in
+          Sdl.set_render_draw_color r col;
+          if fill then
+            Sdl.render_fill_rect r b
+          else
+            Sdl.render_draw_rect r b
+        end
+    in
+      Vector.app draw msgs
+    end
+
+  fun render_entity_info r font e =
+    let
+      val hb = E.entity_hitbox e
+      val ft = E.entity_feet hb
+      fun rend i s =
+        E.render_line r s font i
+    in
+      rend 0 ("pos:  " ^ (Int.toString (#x (#pos e))) ^ " " ^ (Int.toString (#y (#pos e))) ^
+        ", state: " ^ E.string_of_state (#st e));
+      rend 1 ("feet: " ^ (Int.toString (#x ft)) ^ " " ^ (Int.toString (#y ft)));
+      rend 2 ("fall time: " ^ (Int.toString (#fall_time e)));
+      rend 3 ("jump timeout: " ^ (Int.toString (#jump_timeout e)))
+    end
+
+  fun draw_message r t m box line =
+    let
+      val x = #x box + #x line
+      val y = #y box + #y line
+      fun draw_line (l, y) =
+        let val dst = { x = x, y = y, w = #x (#size l), h = #y (#size l) }
+        in
+          Sdl.render_copy r (#tex l) NONE (SOME dst);
+          y + #h line
+        end
+    in
+      Sdl.render_copy r t NONE (SOME box);
+      Vector.foldl draw_line y (#lines m);
+      ()
     end
 
   (** utility **)

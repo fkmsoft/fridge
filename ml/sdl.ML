@@ -35,6 +35,7 @@ sig
   val set_render_draw_color : renderer -> color -> unit
   val set_render_draw_blend_mode : renderer -> blend_mode -> unit
   val render_draw_line : renderer -> int -> int -> int -> int -> unit
+  val render_draw_rect : renderer -> rect -> unit
   val render_fill_rect : renderer -> rect -> unit
   val render_copy : renderer -> texture -> rect option -> rect option -> unit
   val render_copy_ex : renderer -> texture -> rect -> rect -> real -> point -> renderer_flip -> unit
@@ -165,6 +166,9 @@ struct
   fun render_draw_line r x1 y1 x2 y2 =
     (C.call5 (gets "SDL_RenderDrawLine") (C.POINTER, C.INT, C.INT, C.INT, C.INT) C.VOID)
       (r, x1, y1, x2, y2)
+
+  fun render_draw_rect r rect =
+    (C.call2 (gets "SDL_RenderDrawRect") (C.POINTER, RECT) C.VOID) (r, rect)
 
   fun render_fill_rect r rect =
     (C.call2 (gets "SDL_RenderFillRect") (C.POINTER, RECT) C.VOID) (r, rect)
