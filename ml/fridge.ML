@@ -76,11 +76,11 @@ sig
   val render : session -> game_state -> unit
   val clear_game : game_state
   val clear_event : game_event
+*)
 
   (** collisions **)
   val in_rect : Sdl.point -> Sdl.rect -> bool
   val have_collision : Sdl.rect -> Sdl.rect -> bool
-*)
 
   (** rendering **)
   val render_message : Sdl.renderer -> Sdl.font -> Json.t -> int -> msg_line vector
@@ -165,7 +165,22 @@ struct
   (*** functions ***)
   (** high level init **)
   (** high level game **)
+
   (** collisions **)
+  fun in_rect p r =
+    E.between (#x p) (#x r) ((#x r) + #w r) andalso
+      E.between (#y p) (#y r) ((#y r) + #h r)
+
+  fun have_collision r1 r2 =
+    let
+      fun corners r =
+        (#x r, (#x r) + #w r, #y r, (#y r) + #h r)
+      val (lf1, rt1, tp1, bt1) = corners r1
+      val (lf2, rt2, tp2, bt2) = corners r2
+    in
+      ((E.between lf1 lf2 rt2) orelse (E.between rt1 lf2 rt2) orelse (E.between lf2 lf1 rt1) orelse (E.between rt2 lf1 rt1)) andalso
+        ((E.between tp1 tp2 bt2) orelse (E.between bt1 tp2 bt2) orelse (E.between tp2 tp1 bt1) orelse (E.between bt2 tp1 bt1))
+    end
 
   (** rendering **)
   fun render_message r font m offset =

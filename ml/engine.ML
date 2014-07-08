@@ -99,6 +99,7 @@ sig
   val move_entity : entity_state -> entity_event -> level -> move_log * entity_state
 
   (*** collision ***)
+  val between : int -> int -> int -> bool
   val collides_with_terrain : Sdl.rect -> level -> hit
   val stands_on_terrain : Sdl.rect -> level -> bool
   val entity_hitbox : entity_state -> Sdl.rect
