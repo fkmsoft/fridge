@@ -74,14 +74,14 @@ sig
   (*** magic constants ***)
   val asset_dir : string
   val conf_dir : string
-  val state_names : string list
+  val string_of_state : state -> string
 
   (*** loading ***)
-  val load_anim : Json.json -> string -> string -> animation_rule
-  val load_asset_tex : Json.json -> string -> Sdl.renderer -> string -> Sdl.texture
-  val load_entity_rule : Json.json -> string -> entity_rule
+  val load_anim : Json.t -> string -> string -> animation_rule
+  val load_asset_tex : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture
+  val load_entity_rule : Json.t -> string -> entity_rule
   val load_entities : string -> string -> Sdl.renderer -> (Sdl.texture * entity_rule) list
-  val load_entity_resource : Json.json -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
+  val load_entity_resource : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
   val load_state : entity_state -> entity_state
   val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> state -> entity_state
   val clear_debug : debug_state -> debug_state
@@ -112,9 +112,9 @@ sig
   val draw_entity : Sdl.renderer -> Sdl.rect -> entity_state -> debug_state -> unit
 
   (*** Json utility ***)
-  val get_asset : Json.json -> string -> string
-  val get_int_field : Json.json -> string -> string -> int
-  val get_float_field : Json.json -> string -> string -> real
+  val get_asset : Json.t -> string -> string
+  val get_int_field : Json.t -> string -> string -> int
+  val get_float_field : Json.t -> string -> string -> real
 
   (*** SDL utility ***)
   val load_texture : Sdl.renderer -> string -> Sdl.texture
@@ -202,7 +202,11 @@ struct
   (*** magic constants ***)
   val asset_dir = "assets"
   val conf_dir = "conf"
-  val state_names = ["idle", "walk", "fall", "jump", "hang"]
+  fun string_of_state Idle = "idle"
+    | string_of_state Walk = "walk"
+    | string_of_state Fall = "fall"
+    | string_of_state Jump = "jump"
+    | string_of_state Hang = "hang"
 
   (*** Json utility ***)
   exception Load_Err
@@ -320,7 +324,8 @@ struct
       val siz = force (Json.object_get res "frame_size")
       fun i x = Json.integer_value (Json.array_get siz x)
       val start_dim = { x = 0, y = 0, w = i 0, h = i 1 }
-      val anims = Vector.fromList (map (fn s => load_anim res n s) state_names)
+      val states = [Idle, Walk, Jump, Fall, Hang]
+      val anims = Vector.fromList (map (fn s => load_anim res n (string_of_state s)) states)
     in
       Json.decref res;
       (t, {

@@ -1,6 +1,6 @@
 signature JSON =
 sig
-  type json = CInterface.vol
+  type t = CInterface.vol
   type iter = CInterface.vol
   type error = {
     line : int,
@@ -30,38 +30,38 @@ sig
   (** functions **)
 
   (* loading / utility *)
-  val load_file : string -> parse_flags list -> json
-  val dumps : json -> print_flags list -> string
-  val decref : json -> unit
+  val load_file : string -> parse_flags list -> t
+  val dumps : t -> print_flags list -> string
+  val decref : t -> unit
 
   (* objects *)
-  val object_size : json -> int
-  val object_get : json -> string -> json option
-  val object_set_new : json -> string -> json -> unit
+  val object_size : t -> int
+  val object_get : t -> string -> t option
+  val object_set_new : t -> string -> t -> unit
 
-  val object_iter : json -> iter
+  val object_iter : t -> iter
   val object_key_to_iter : string -> iter
-  val object_iter_next : json -> iter -> iter
+  val object_iter_next : t -> iter -> iter
   val object_iter_key : iter -> string
-  val object_iter_value : iter -> json
-  val object_foreach : json -> (string -> json -> int -> 'a) -> 'a list
+  val object_iter_value : iter -> t
+  val object_foreach : t -> (string -> t -> int -> 'a) -> 'a list
 
   (* arrays *)
-  val array_size : json -> int
-  val array_get : json -> int -> json
+  val array_size : t -> int
+  val array_get : t -> int -> t
 
   (* primitives *)
-  val integer : int -> json
-  val integer_value : json -> int
-  val string_value : json -> string
-  val real_value : json -> real
+  val integer : int -> t
+  val integer_value : t -> int
+  val string_value : t -> string
+  val real_value : t -> real
 end
 
 structure Json : JSON =
 struct
   structure C = CInterface
 
-  type json = C.vol
+  type t = C.vol
   type iter = C.vol
   type error = {
     line : int,

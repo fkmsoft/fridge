@@ -3,9 +3,11 @@ sig
   (*** types ***)
 
   (* opaque *)
+  type window = CInterface.vol
   type renderer = CInterface.vol
   type texture = CInterface.vol
   type font = CInterface.vol
+  type event = CInterface.vol
 
   (* structs *)
   type rect = { x : int, y : int, w : int, h : int }
@@ -48,9 +50,11 @@ structure Sdl : SDL =
 struct
   structure C = CInterface
 
+  type window = C.vol
   type renderer = C.vol
   type texture = C.vol
   type font = C.vol
+  type event = C.vol
 
   type rect = { x : int, y : int, w : int, h : int }
   type point = { x : int, y : int }
