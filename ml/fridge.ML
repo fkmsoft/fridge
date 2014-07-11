@@ -83,10 +83,10 @@ sig
   (** high level game **)
 (*
   val process_event : Sdl.event -> game_event
-  val update_gamestate : session -> game_event -> game_state -> game_state
+  *)
   val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
   val enemy_movement : Engine.level -> Sdl.rect -> Engine.entity_state vector -> Engine.entity_state vector
-  *)
+  val update_gamestate : session -> game_event -> game_state -> game_state
   val render : session -> game_state -> unit
   val clear_game : game_state -> game_state
   val clear_event : game_event
@@ -263,6 +263,9 @@ struct
     end
 
   (** high level game **)
+  fun set_group_state st g =
+    Vector.map (fn e => E.load_state e st) g
+
   fun enemy_movement terrain player nmi =
     Vector.map (fn e =>
       let
@@ -297,6 +300,100 @@ struct
         else
           e'
       end) nmi
+
+  fun update_gamestate s ev gs =
+    let
+      fun switch Mode_Logo =
+          let
+            val logo = E.tick_animation (#logo gs)
+            val idle_anim = Vector.sub ((#anim (#rule logo)), E.int_of_state E.Idle)
+            val n_frames = Vector.length (#frames idle_anim)
+            val skip = (#pos (#anim logo)) = n_frames - 1 orelse #keyboard ev
+          in
+            if skip then
+              switch Mode_Intro
+            else
+              { logo = logo,
+                need_to_collect = #need_to_collect gs,
+                intro = #intro gs,
+                entities = #entities gs,
+                msg = #msg gs,
+                msg_timeout = #msg_timeout gs,
+                run = #run gs,
+                debug = #debug gs }
+          end
+        | switch Mode_Intro =
+          let
+            val intro = E.tick_animation (#intro gs)
+            val skip = #keyboard ev
+          in
+            if skip then
+              switch Mode_Game
+            else
+              { intro = intro,
+                need_to_collect = #need_to_collect gs,
+                logo = #logo gs,
+                entities = #entities gs,
+                msg = #msg gs,
+                msg_timeout = #msg_timeout gs,
+                run = #run gs,
+                debug = #debug gs }
+          end
+        | switch Mode_Game =
+          let
+            val d = #debug gs
+            val debug = if #toggle_debug ev then not (#active d) else #active d
+            (* TODO reload conf *)
+            val pause = if #toggle_pause ev andalso debug then not (#pause d) else #pause d
+            val show_terrain_collision = if #toggle_terrain ev andalso debug then not (#show_terrain_collision d) else #show_terrain_collision d
+            fun animate e = if #active e then E.tick_animation e else e
+            val entities = #entities gs
+            val objects = Vector.map animate (Vector.sub (entities, int_of_group Group_Objects))
+            val players = Vector.map animate (Vector.sub (entities, int_of_group Group_Player))
+            val player = Vector.sub (players, 0)
+            val enemies = Vector.map animate (set_group_state (if debug andalso pause then E.Idle else E.Walk) (Vector.sub (entities, int_of_group Group_Enemies)))
+            val level = #level s
+            val moved_enemies = if not debug andalso not pause then
+                enemy_movement level (E.entity_hitbox player) enemies
+              else
+                enemies
+            val (mlog, moved_player_) = E.move_entity player (#player ev) level
+            val moved_player = E.load_state moved_player_ (#st moved_player_)
+            val next_player = if #reset ev then E.init_entity_state moved_player NONE NONE E.Idle else moved_player
+            val (old_msg, old_msg_timeout) = if #msg_timeout gs > 0 then
+                (#msg gs, (#msg_timeout gs) - 1)
+              else
+                (NONE, 0)
+            val r = E.entity_hitbox next_player
+            val mrules = #msg s
+            val (msg, msg_timeout) = case (Vector.find (fn m =>
+                #when m <> Msg_Never andalso in_rect (#pos m) r) (#msgs mrules)) of
+              SOME m => (SOME m, #timeout mrules) (* TODO update Msg_Once status *) |
+              NONE => (old_msg, old_msg_timeout)
+            (* TODO collision detection *)
+            val run = if #exit ev then Mode_Exit else Mode_Game
+          in
+            { need_to_collect = #need_to_collect gs,
+              intro = #intro gs,
+              logo = #logo gs,
+              entities = #entities gs,
+              msg = msg,
+              msg_timeout = msg_timeout,
+              run = run,
+              debug = {
+                active = debug,
+                frames = #frames d,
+                hitboxes = #hitboxes d,
+                pause = pause,
+                show_terrain_collision = show_terrain_collision,
+                terrain_collision = #terrain_collision d,
+                message_positions = #message_positions d,
+                font = #font d } }
+          end
+        | switch Mode_Exit = gs
+    in
+      switch (#run gs)
+    end
 
   fun render s gs =
     let

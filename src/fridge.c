@@ -495,7 +495,7 @@ static void process_event(SDL_Event const *ev, game_event *r)
 
 static void update_gamestate(session *s, game_state *gs, game_event const *ev)
 {
-	if (gs->run == MODE_LOGO ) {
+	if (gs->run == MODE_LOGO) {
 
 		tick_animation(&gs->logo );
 

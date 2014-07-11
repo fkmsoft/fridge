@@ -76,6 +76,7 @@ sig
   val conf_dir : string
   val string_of_state : state -> string
   val int_of_dir : dir -> int
+  val int_of_state : state -> int
 
   (*** loading ***)
   val load_anim : Json.t -> string -> string -> animation_rule
@@ -83,7 +84,7 @@ sig
   val load_entity_rule : Json.t -> string -> entity_rule
   val load_entities : string -> string -> Sdl.renderer -> (Sdl.texture * entity_rule) list
   val load_entity_resource : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
-  val load_state : entity_state -> entity_state
+  val load_state : entity_state -> state -> entity_state
   val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> state -> entity_state
   val clear_debug : debug_state -> debug_state
 
@@ -357,10 +358,10 @@ struct
     | int_of_state Jump = 3
     | int_of_state Hang = 4
 
-  fun load_state es =
+  fun load_state es st =
     let
       val er = #rule es
-      val ar = (Vector.sub (#anim er, int_of_state (#st es)))
+      val ar = (Vector.sub (#anim er, int_of_state st))
       val anim = {
         pos = 0,
         frame = Vector.sub (#frames ar, 0),
@@ -370,7 +371,7 @@ struct
       pos = #pos es,
       spawn = #spawn es,
       dir = #dir es,
-      st = #st es,
+      st = st,
       jump_timeout = #jump_timeout es,
       jump_type = #jump_type es,
       fall_time = #fall_time es,
@@ -407,7 +408,7 @@ struct
           w = w, h = h },
         jump_timeout = 0,
         jump_type = Jump_High,
-        fall_time = 0 }
+        fall_time = 0 } st
     end
 
   fun clear_debug s =
@@ -423,7 +424,7 @@ struct
   val clear_order =
     { move_left = false, move_right = false, move_jump = false, walk = false }
 
-  fun tick_animation (es:entity_state) =
+  fun tick_animation es =
     let
       val a = #anim es
       val ar = Vector.sub (#anim (#rule es), int_of_state (#st es))
