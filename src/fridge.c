@@ -673,7 +673,7 @@ static void enemy_movement(level const *terrain, group *nmi, SDL_Rect const *pla
 			track = SDL_TRUE;
 		}
 		h.x += e->dir * e->rule->walk_dist;
-		if (!collides_with_terrain(&h, terrain) && (!e->rule->has_gravity || stands_on_terrain(&h, terrain))) {
+		if (collides_with_terrain(&h, terrain) == HIT_NONE && (!e->rule->has_gravity || stands_on_terrain(&h, terrain))) {
 			order.walk = SDL_TRUE;
 		}
 		move_log log;

@@ -85,7 +85,7 @@ sig
   val process_event : Sdl.event -> game_event
   val update_gamestate : session -> game_event -> game_state -> game_state
   val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
-  val enemy_movement : Engine.level -> Engine.entity_state -> Engine.entity_state vector -> Engine.entity_state vector
+  val enemy_movement : Engine.level -> Sdl.rect -> Engine.entity_state vector -> Engine.entity_state vector
   *)
   val render : session -> game_state -> unit
   val clear_game : game_state -> game_state
@@ -263,6 +263,41 @@ struct
     end
 
   (** high level game **)
+  fun enemy_movement terrain player nmi =
+    Vector.map (fn e =>
+      let
+        val h = E.entity_hitbox e
+        val rule = #rule e
+        val (turn, right) =
+          if (E.between (#y player) (#y h) ((#y h) + #h h)) orelse
+              E.between (#y h) (#y player) ((#y player) + #h player) then
+            (true, #x (#pos e) < #x player)
+          else
+            (false, false)
+        val dir = if turn then
+          (if right then E.Right else E.Left)
+          else #dir e
+        val jump = (E.between (#x player) (#x h) ((#x h) + #w h)) andalso
+            #y (#pos e) > #y player
+        val track = turn orelse jump
+        val h' = {
+          x = (#x h) + ((E.int_of_dir dir) * #walk_dist rule),
+          y = #y h, w = #w h, h = #h h }
+        val walk = ((E.collides_with_terrain h' terrain) <> E.Hit_None) andalso
+            ((not (#has_gravity rule)) orelse E.stands_on_terrain h' terrain)
+        val order = {
+          move_left = walk andalso (not right),
+          move_right = walk andalso right,
+          move_jump = jump,
+          walk = walk }
+        val (mlog, e') = E.move_entity e order terrain
+      in
+        if (not track) andalso (not walk) then
+          E.turn e' (if dir = E.Left then E.Right else E.Left)
+        else
+          e'
+      end) nmi
+
   fun render s gs =
     let
       val player = Vector.sub (Vector.sub (#entities gs, int_of_group Group_Player), 0)

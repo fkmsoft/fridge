@@ -75,6 +75,7 @@ sig
   val asset_dir : string
   val conf_dir : string
   val string_of_state : state -> string
+  val int_of_dir : dir -> int
 
   (*** loading ***)
   val load_anim : Json.t -> string -> string -> animation_rule
@@ -96,6 +97,7 @@ sig
 
   (*** movement ***)
   val keystate_to_movement : Sdl.key list -> entity_event
+  val turn : entity_state -> dir -> entity_state
   val move_entity : entity_state -> entity_event -> level -> move_log * entity_state
 
   (*** collision ***)
@@ -782,24 +784,25 @@ struct
         end
     end
 
+  fun turn e dir = {
+    dir = dir,
+    st = #st e,
+    fall_time = #fall_time e,
+    jump_timeout = #jump_timeout e,
+    jump_type = #jump_type e,
+    anim = #anim e,
+    rule = #rule e,
+    tex = #tex e,
+    active = #active e,
+    hitbox = #hitbox e,
+    pos = #pos e,
+    spawn = #spawn e }
+
   fun move_entity e ev lvl =
     let
       val dir = if #move_left ev then Left
         else if #move_right ev then Right
         else #dir e
-      fun turn e dir = {
-        dir = dir,
-        st = #st e,
-        fall_time = #fall_time e,
-        jump_timeout = #jump_timeout e,
-        jump_type = #jump_type e,
-        anim = #anim e,
-        rule = #rule e,
-        tex = #tex e,
-        active = #active e,
-        hitbox = #hitbox e,
-        pos = #pos e,
-        spawn = #spawn e }
       fun walk () =
         if #move_jump ev then
           let val (j, e') = entity_start_jump (turn e dir) lvl (if #walk ev andalso #has_gravity (#rule e) then Jump_Wide else Jump_High)
