@@ -24,7 +24,17 @@ sig
   datatype blend_mode = Blend_Mode_None | Blend_Mode_Blend | Blend_Mode_Add | Blend_Mode_Mod
   val int_of_blend_mode : blend_mode -> int
 
+  datatype window_pos = Windowpos_Undefined
+
+  datatype init_flag = Init_Video
+
   (*** functions ***)
+
+  (** init **)
+  val init : init_flag list -> unit
+  val create_window : string -> window_pos -> window_pos -> int -> int -> int -> window
+  val create_renderer : window -> int -> int -> renderer
+  val set_window_icon : window -> surface -> unit
 
   (** textures & surfaces **)
   val create_texture_from_surface : renderer -> surface -> texture
@@ -48,6 +58,9 @@ sig
   val img_load : string -> surface
 
   (** SDL_ttf **)
+  val ttf_init : unit -> unit
+  val ttf_open_font : string -> int -> font
+  val ttf_close_font : font -> unit
   val ttf_render_text_blended : font -> string -> color -> surface
 end
 
@@ -84,6 +97,12 @@ struct
     | int_of_blend_mode Blend_Mode_Add = 2
     | int_of_blend_mode Blend_Mode_Mod = 4
 
+  datatype window_pos = Windowpos_Undefined
+  fun int_of_window_pos Windowpos_Undefined = 0
+
+  datatype init_flag = Init_Video
+  fun int_of_init_flag Init_Video = 0
+
   exception Null_Pointer
 
   val void_p = C.Cpointer C.Cvoid
@@ -102,6 +121,21 @@ struct
 
   fun img_load file =
     (C.call1 (gets_img "IMG_Load") C.STRING SURFACE) file
+
+  fun init flags =
+    (C.call1 (gets "SDL_Init") C.INT C.VOID) (foldl (fn (x, a) => a + int_of_init_flag x) 0 flags)
+
+  fun create_window name pos_a pos_b x y flags =
+    (C.call6 (gets "SDL_CreateWindow") (C.STRING, C.INT, C.INT, C.INT, C.INT, C.INT) C.POINTER)
+      (name, int_of_window_pos pos_a, int_of_window_pos pos_b, x, y, flags)
+
+  fun create_renderer w flag_a flag_b =
+    (C.call3 (gets "SDL_CreateRenderer") (C.POINTER, C.INT, C.INT) C.POINTER)
+      (w, flag_a, flag_b)
+
+  fun set_window_icon w i =
+    (C.call2 (gets "SDL_SetWindowIcon") (C.POINTER, SURFACE) C.VOID)
+      (w, i)
 
   fun create_texture_from_surface r s =
     (C.call2 (gets "SDL_CreateTextureFromSurface") (C.POINTER, SURFACE) C.POINTER)
@@ -200,6 +234,15 @@ struct
     in
       lower_rc (r, t, src, dst, angle, center, int_of_flip flip)
     end
+
+  fun ttf_init () =
+    (C.call0 (gets_ttf "TTF_Init") () C.VOID) ()
+
+  fun ttf_open_font file size =
+    (C.call2 (gets_ttf "TTF_OpenFont") (C.STRING, C.INT) C.POINTER) (file, size)
+
+  fun ttf_close_font font =
+    (C.call1 (gets_ttf "TTF_CloseFont") C.POINTER C.VOID) font
 
   fun ttf_render_text_blended font text { r, g, b, a } =
     (C.call6 (gets_ttf "TTF_RenderText_Blended") (C.POINTER, C.STRING, C.INT, C.INT, C.INT, C.INT) SURFACE)

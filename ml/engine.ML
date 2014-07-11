@@ -82,11 +82,11 @@ sig
   val load_anim : Json.t -> string -> string -> animation_rule
   val load_asset_tex : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture
   val load_entity_rule : Json.t -> string -> entity_rule
-  val load_entities : string -> string -> Sdl.renderer -> (Sdl.texture * entity_rule) list
+  val load_entities : string -> string -> Sdl.renderer -> (Json.t * (Sdl.texture * entity_rule) vector)
   val load_entity_resource : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
   val load_state : entity_state -> state -> entity_state
   val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> state -> entity_state
-  val clear_debug : debug_state -> debug_state
+  val clear_debug : Sdl.font -> Sdl.texture -> debug_state
 
   (*** teardown ***)
   val destroy_level : level -> unit
@@ -349,7 +349,7 @@ struct
           r
         end
     in
-      Json.object_foreach ent load
+      (ent, Vector.fromList (Json.object_foreach ent load))
     end
 
   fun int_of_state Idle = 0
@@ -411,11 +411,11 @@ struct
         fall_time = 0 } st
     end
 
-  fun clear_debug s =
+  fun clear_debug font terrain_collision =
     { active = false, pause = false, frames = true,
       hitboxes = true, show_terrain_collision = false, message_positions = true,
-      font = #font s,
-      terrain_collision = #terrain_collision s }
+      font = font,
+      terrain_collision = terrain_collision }
 
   (*** teardown ***)
   fun destroy_level l = ()

@@ -61,14 +61,12 @@ sig
   val string_of_frq : msg_frequency -> string
   val int_of_group : group -> int
 
-(*
   (*** functions ***)
   (** high level init **)
+  val load_config : Json.t -> string -> (Sdl.point * Sdl.window * Sdl.renderer) -> (session * game_state)
+  val load_intro : Sdl.point -> Json.t -> string -> (Sdl.texture * Engine.entity_rule) vector -> Engine.entity_state
+  val init_group : Json.t -> Json.t -> string -> (Sdl.texture * Engine.entity_rule) vector -> Engine.state -> Engine.entity_state vector
   val init_game : string -> (session * game_state)
-  val load_config : Json.t -> string -> (session * game_state)
-  val load_intro : session -> Json.t -> string -> Engine.entity_rule -> Sdl.texture vector -> Engine.entity_state
-  val init_group : Json.t -> Json.t -> string -> Sdl.texture vector -> Engine.entity_rule vector -> Engine.state -> Engine.entity_state vector
-*)
 
   (** collisions **)
   val in_rect : Sdl.point -> Sdl.rect -> bool
@@ -81,9 +79,7 @@ sig
   val draw_message : Sdl.renderer -> Sdl.texture -> message -> Sdl.rect -> Sdl.rect -> unit
 
   (** high level game **)
-(*
-  val process_event : Sdl.event -> game_event
-  *)
+(* TODO val process_event : Sdl.event -> game_event *)
   val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
   val enemy_movement : Engine.level -> Sdl.rect -> Engine.entity_state vector -> Engine.entity_state vector
   val update_gamestate : session -> game_event -> game_state -> game_state
@@ -92,10 +88,10 @@ sig
   val clear_event : game_event
 
   (** utility **)
-  val load_finish : session -> Json.t -> Sdl.font -> int -> finish
+  val load_finish : Sdl.renderer -> Json.t -> Sdl.font -> int -> finish
   val load_asset_surf : Json.t -> string -> string -> Sdl.surface
-  val load_messages : Json.t -> Sdl.font -> int -> string -> session -> msg_info
-  val load_collisions : Json.t -> Engine.line list * Engine.line list
+  val load_messages : Json.t -> Sdl.font -> int -> string -> Sdl.point -> Sdl.renderer -> msg_info
+  val load_collisions : Json.t -> Engine.line vector * Engine.line vector
 end
 
 structure Fridge : FRIDGE =
@@ -170,7 +166,6 @@ struct
     | int_of_group Group_Player = 2
 
   (*** functions ***)
-  (** high level init **)
 
   (** collisions **)
   fun in_rect p r =
@@ -439,7 +434,7 @@ struct
     msg = NONE,
     msg_timeout = 0,
     run = #run gs,
-    debug = E.clear_debug (#debug gs) }
+    debug = E.clear_debug (#font (#debug gs)) (#terrain_collision (#debug gs)) }
 
   val clear_event = {
     player = E.clear_order,
@@ -452,7 +447,7 @@ struct
     reset = false }
 
   (** utility **)
-  fun load_finish s game font fontsize =
+  fun load_finish r game font fontsize =
     let
       val fin = Json.object_get game "finish"
       val a_pos = Json.object_get fin "pos"
@@ -463,7 +458,7 @@ struct
         let val m = Json.object_get fin key
         in {
           pos = pos, when = Msg_Never,
-          lines = render_message (#r s) font m 0 } end
+          lines = render_message r font m 0 } end
       val win = make_msg "win"
       val loss = make_msg "loss"
     in
@@ -478,13 +473,11 @@ struct
       Sdl.img_load p
     end
 
-  fun load_messages game font fontsize root s =
+  fun load_messages game font fontsize root screen r =
     let
       val obj = Json.object_get game "message"
-      val mi = #msg s
       val msg_srf = load_asset_surf obj root "resource"
-      val tex = Sdl.create_texture_from_surface (#r s) msg_srf
-      val screen = #screen s
+      val tex = Sdl.create_texture_from_surface r msg_srf
       val box = {
         x = ((#x screen) - #w msg_srf) div 2,
         y = (#y screen) - #h msg_srf,
@@ -506,7 +499,7 @@ struct
           when = if string_of_frq Msg_Once = Json.string_value (Json.array_get m 2)
             then Msg_Once
             else Msg_Always,
-          lines = render_message (#r s) font m 3 }
+          lines = render_message r font m 3 }
       val ms = Json.array_foreach mo f
     in
       Sdl.free_surface msg_srf;
@@ -540,9 +533,161 @@ struct
       val lines = Json.array_foreach lines_o f
       fun switch (Horizontal l, (h, v)) = (l::h, v)
         | switch (Vertical l, (h, v)) = (h, l::v)
+      val (hor, ver) = Vector.foldl switch ([], []) lines
     in
-      Vector.foldl switch ([], []) lines
+      (Vector.fromList hor, Vector.fromList ver)
     end
+
+  (** high level init **)
+  fun init_group game entities key e_ress st =
+    let
+      val objs = Json.object_get game key (* TODO handle failure *)
+      fun ival obj = Json.integer_value obj
+      fun load name obj i =
+        let
+          val entity = Json.object_get entities name
+          val ei = ival (Json.object_get entity "index")
+          fun f spawn j =
+            let
+              val (tex, rule) = Vector.sub (e_ress, ei)
+              val spawn_st = {
+                active = false,
+                pos = { x = 0, y = 0 },
+                hitbox = { x = 0, y = 0, w = 0, h = 0 },
+                spawn = {
+                  x = ival (Json.array_get spawn 0),
+                  y = ival (Json.array_get spawn 1),
+                  w = 0,
+                  h = 0 },
+                dir = E.Left,
+                st = st,
+                jump_timeout = 0,
+                jump_type = E.Jump_High,
+                fall_time = 0,
+                anim = { pos = 0, frame = 0, remaining = 0 },
+                rule = rule,
+                tex = tex }
+              val es = E.init_entity_state spawn_st NONE NONE st
+              (* TODO custom rules *)
+            in
+              es
+            end
+        in
+          Json.array_foreach obj f
+        end
+    in
+      Vector.concat (Json.object_foreach objs load)
+    end
+
+  fun load_intro screen obj k e_ress =
+    let
+      val io = Json.object_get obj k (* TODO handle failure -> active = false *)
+      val i = Json.integer_value (Json.object_get io "index")
+      val w = 640 (* FIXME *)
+      val h = 480
+      val (tex, rule) = Vector.sub (e_ress, i)
+      val intro = {
+            active = false,
+            pos = { x = 0, y = 0 },
+            hitbox = { x = 0, y = 0, w = 0, h = 0 },
+            spawn = {
+              x = ((#x screen) - w) div 2,
+              y = ((#y screen) - h) div 2,
+              w = w,
+              h = h },
+            dir = E.Left,
+            st = E.Idle,
+            jump_timeout = 0,
+            jump_type = E.Jump_High,
+            fall_time = 0,
+            anim = { pos = 0, frame = 0, remaining = 0 },
+            rule = rule,
+            tex = tex }
+    in
+      E.init_entity_state intro NONE NONE E.Idle
+    end
+
+  fun load_config game root (screen, w, r) =
+    let
+      val fnt = Json.object_get game "font"
+      val fnt_path = root ^ "/" ^ E.asset_dir ^ "/" ^ (Json.string_value (Json.object_get fnt "resource"))
+      val fnt_siz = Json.integer_value (Json.object_get fnt "size")
+      val font = Sdl.ttf_open_font fnt_path fnt_siz
+      val debug_font = Sdl.ttf_open_font "debug_font.ttf" 14
+      val finish = load_finish r game font fnt_siz
+      val msg = load_messages game font fnt_siz root screen r
+      val lvl = Json.object_get game "level"
+      val lvl_path = root ^ "/" ^ E.conf_dir ^ "/" ^ (Json.string_value lvl)
+      val level = Json.load_file lvl_path []
+      val level_background = E.load_asset_tex level root r "resource"
+      val (horizontal, vertical) = load_collisions level
+      val entity_res = Json.object_get game "entities"
+      val entity_file = Json.string_value (Json.object_get entity_res "resource")
+      val entity_path = root ^ "/" ^ E.conf_dir ^ "/" ^ entity_file
+      val (entities, e_ress) = E.load_entities root entity_path r
+      val players = init_group game entities "players" e_ress E.Idle
+      val objects = init_group game entities "objects" e_ress E.Idle
+      val enemies = init_group game entities "enemies" e_ress E.Walk
+      val intro = load_intro screen entities "intro" e_ress
+      val logo = load_intro screen entities "logo" e_ress
+      val terrain_collision = E.load_texture r (root ^ "/assets/level1.gif")
+    in
+      Sdl.ttf_close_font font;
+      Json.decref level;
+      Json.decref entities;
+      Json.decref game;
+      ({ w = w,
+         r = r,
+         level = {
+           background = level_background,
+           vertical = vertical,
+           horizontal = horizontal,
+           dim = { x = 0, y = 0, w = 0, h = 0 } (* FIXME *) },
+         msg = msg,
+         finish = finish,
+         screen = screen },
+       { need_to_collect = 0,
+         logo = logo,
+         intro = intro,
+         entities = Vector.fromList([players, objects, enemies]),
+         msg = NONE,
+         msg_timeout = 0,
+         run =
+           if #active logo then
+             Mode_Logo
+           else if #active intro then
+             Mode_Intro
+           else
+             Mode_Game,
+         debug = E.clear_debug debug_font terrain_collision})
+    end
+
+  fun init_game root =
+    let
+      val path = root ^ "/" ^ E.conf_dir ^ "/" ^ game_conf
+      val game = Json.load_file path []
+      val res = Json.object_get game "resolution"
+      val x = Json.integer_value (Json.array_get res 0)
+      val y = Json.integer_value (Json.array_get res 1)
+      val screen = { x = x, y =y }
+      fun init () =
+        let
+          val w = Sdl.create_window "Fridge Filler" Sdl.Windowpos_Undefined Sdl.Windowpos_Undefined x y 0
+          val icon_path = root ^ "/" ^ "icon.gif"
+          val ico = Sdl.img_load icon_path
+          val r = Sdl.create_renderer w ~1 0
+          val (s, gs) = load_config game root (screen, w, r)
+        in
+          Sdl.set_window_icon w ico;
+          Sdl.free_surface ico;
+          (s, clear_game gs)
+        end
+    in
+      Sdl.ttf_init ();
+      Sdl.init [Sdl.Init_Video];
+      init ()
+    end
+
 end
 
 (* vim: se ai et: *)
