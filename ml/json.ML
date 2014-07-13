@@ -44,8 +44,8 @@ sig
   val object_iter : t -> iter
   val object_key_to_iter : string -> iter
   val object_iter_next : t -> iter -> iter
-  val object_iter_key : iter -> string
-  val object_iter_value : iter -> t
+  val object_iter_key : iter -> string option
+  val object_iter_value : iter -> t option
   val object_foreach : t -> (string -> t -> int -> 'a) -> 'a list
 
   (* arrays *)
@@ -148,7 +148,9 @@ struct
     end
 
   fun decref obj =
-    (C.call1 (gets "json_decref") C.POINTER C.VOID) obj
+    ()
+    (* TODO
+    (C.call1 (gets "json_decref") C.POINTER C.VOID) obj *)
 
   fun object_size obj =
     (C.call1 (gets "json_object_size") C.POINTER C.INT) obj
@@ -182,23 +184,43 @@ struct
       (obj, iter)
 
   fun object_iter_key iter =
-    (C.call1 (gets "json_object_iter_key") C.POINTER C.STRING) iter
+    let
+      val k = (C.call1 (gets "json_object_iter_key") C.POINTER C.POINTER) iter
+    in
+      if C.fromCint k = 0 then
+        NONE
+      else
+        SOME (C.fromCstring k)
+    end
 
   fun object_iter_value iter =
-    (C.call1 (gets "json_object_iter_value") C.POINTER C.POINTER) iter
+    let
+      val v = (C.call1 (gets "json_object_iter_value") C.POINTER C.POINTER) iter
+    in
+      if C.fromCint v = 0 then
+        NONE
+      else
+        SOME v
+    end
 
   fun object_foreach obj f =
     let
-      fun iter key i =
-        if key <> "" then
-          (f key (object_iter_value (object_key_to_iter key)) i) ::
-            (iter
-              (object_iter_key (object_iter_next obj (object_key_to_iter key)))
-              (i + 1))
-        else
-          []
+      fun iterate it i =
+          let
+            val v = object_iter_value it
+            val k = object_iter_key it
+          in
+            case v of
+              NONE => [] |
+              SOME v =>
+              case k of NONE => [] | SOME k =>
+              (f k v i) ::
+                (iterate
+                  (object_iter_next obj it)
+                  (i + 1))
+          end
     in
-      iter (object_iter_key (object_iter obj)) 0
+      iterate (object_iter obj) 0
     end
 
   fun array_size a =

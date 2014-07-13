@@ -19,20 +19,20 @@ sig
   datatype key = Key_Left | Key_Right | Key_Space
 
   datatype renderer_flip = Flip_None | Flip_Horizontal | Flip_Vertical
-  val int_of_flip : renderer_flip -> int
 
   datatype blend_mode = Blend_Mode_None | Blend_Mode_Blend | Blend_Mode_Add | Blend_Mode_Mod
-  val int_of_blend_mode : blend_mode -> int
 
-  datatype window_pos = Windowpos_Undefined
+  datatype window_flag = Window_Fullscreen | Window_OpenGL | Window_Shown | Window_Hidden | Window_Borderless | Window_Resizable | Window_Minimized | Window_Maximized
+  datatype window_pos = Windowpos_Undefined | Windowpos_Centered | Windowpos of int
 
-  datatype init_flag = Init_Video
+  datatype init_flag = Init_Timer | Init_Audio | Init_Video | Init_Joystick | Init_Haptic | Init_Gamecontroller | Init_Events | Init_Noparachute
+  val Init_Everything : init_flag list
 
   (*** functions ***)
 
   (** init **)
   val init : init_flag list -> unit
-  val create_window : string -> window_pos -> window_pos -> int -> int -> int -> window
+  val create_window : string -> window_pos -> window_pos -> int -> int -> window_flag list -> window
   val create_renderer : window -> int -> int -> renderer
   val set_window_icon : window -> surface -> unit
 
@@ -97,19 +97,39 @@ struct
     | int_of_blend_mode Blend_Mode_Add = 2
     | int_of_blend_mode Blend_Mode_Mod = 4
 
-  datatype window_pos = Windowpos_Undefined
-  fun int_of_window_pos Windowpos_Undefined = 0
+  datatype window_flag = Window_Fullscreen | Window_OpenGL | Window_Shown | Window_Hidden | Window_Borderless | Window_Resizable | Window_Minimized | Window_Maximized
+  fun int_of_window_flag Window_Fullscreen = 0x1
+    | int_of_window_flag Window_OpenGL = 0x2
+    | int_of_window_flag Window_Shown = 0x4
+    | int_of_window_flag Window_Hidden = 0x8
+    | int_of_window_flag Window_Borderless = 0x10
+    | int_of_window_flag Window_Resizable = 0x20
+    | int_of_window_flag Window_Minimized = 0x40
+    | int_of_window_flag Window_Maximized = 0x80
 
-  datatype init_flag = Init_Video
-  fun int_of_init_flag Init_Video = 0
+  datatype window_pos = Windowpos_Undefined | Windowpos_Centered | Windowpos of int
+  fun int_of_window_pos Windowpos_Undefined = 0x1fff0000
+    | int_of_window_pos Windowpos_Centered = 0x2fff0000
+    | int_of_window_pos (Windowpos p) = p
 
-  exception Null_Pointer
+  datatype init_flag = Init_Timer | Init_Audio | Init_Video | Init_Joystick | Init_Haptic | Init_Gamecontroller | Init_Events | Init_Noparachute
+  val Init_Everything = [Init_Timer, Init_Audio, Init_Video, Init_Events, Init_Joystick, Init_Haptic, Init_Gamecontroller]
+  fun int_of_init_flag Init_Timer = 0x1
+    | int_of_init_flag Init_Audio = 0x10
+    | int_of_init_flag Init_Video = 0x20
+    | int_of_init_flag Init_Joystick = 0x200
+    | int_of_init_flag Init_Haptic = 0x1000
+    | int_of_init_flag Init_Gamecontroller = 0x2000
+    | int_of_init_flag Init_Events = 0x4000
+    | int_of_init_flag Init_Noparachute = 0x100000
+
+  exception Null_Pointer of string
 
   val void_p = C.Cpointer C.Cvoid
 
   fun surface_from_c s =
     if C.fromCint s = 0 then
-      raise Null_Pointer
+      raise Null_Pointer "surface"
     else
       { w = C.fromCint (C.offset 2 C.Cint (C.deref s)),
         h = C.fromCint (C.offset 3 C.Cint (C.deref s)),
@@ -119,15 +139,21 @@ struct
 
   val SURFACE = C.mkConversion surface_from_c surface_to_c void_p
 
+  exception Load_Err of string
+
   fun img_load file =
     (C.call1 (gets_img "IMG_Load") C.STRING SURFACE) file
+    handle (Null_Pointer _) => raise (Load_Err file)
+
+  fun fold_flags to_int fs =
+    foldl (fn (x, a) => a + to_int x) 0 fs
 
   fun init flags =
-    (C.call1 (gets "SDL_Init") C.INT C.VOID) (foldl (fn (x, a) => a + int_of_init_flag x) 0 flags)
+    (C.call1 (gets "SDL_Init") C.INT C.VOID) (fold_flags int_of_init_flag flags)
 
-  fun create_window name pos_a pos_b x y flags =
+  fun create_window name x y w h flags =
     (C.call6 (gets "SDL_CreateWindow") (C.STRING, C.INT, C.INT, C.INT, C.INT, C.INT) C.POINTER)
-      (name, int_of_window_pos pos_a, int_of_window_pos pos_b, x, y, flags)
+      (name, int_of_window_pos x, int_of_window_pos y, w, h, (fold_flags int_of_window_flag flags))
 
   fun create_renderer w flag_a flag_b =
     (C.call3 (gets "SDL_CreateRenderer") (C.POINTER, C.INT, C.INT) C.POINTER)
@@ -136,13 +162,16 @@ struct
   fun set_window_icon w i =
     (C.call2 (gets "SDL_SetWindowIcon") (C.POINTER, SURFACE) C.VOID)
       (w, i)
+    handle (Null_Pointer s) => raise Null_Pointer (s ^ "icon")
 
   fun create_texture_from_surface r s =
     (C.call2 (gets "SDL_CreateTextureFromSurface") (C.POINTER, SURFACE) C.POINTER)
       (r, s)
+    handle (Null_Pointer s) => raise Null_Pointer (s ^ "texture")
 
   fun free_surface s =
     (C.call1 (gets "SDL_FreeSurface") SURFACE C.VOID) s
+    handle (Null_Pointer s) => raise Null_Pointer (s ^ "free")
 
   fun destroy_texture t =
     (C.call1 (gets "SDL_DestroyTexture") C.POINTER C.VOID) t
@@ -174,7 +203,7 @@ struct
 
   fun point_from_c p =
     if C.fromCint p = 0 then
-      raise Null_Pointer
+      raise Null_Pointer "point"
     else
       { x = C.fromCint (C.offset 0 C.Cint (C.deref p)),
         y = C.fromCint (C.offset 1 C.Cint (C.deref p)) }
@@ -198,7 +227,7 @@ struct
 
   fun rect_from_c r =
     if C.fromCint r = 0 then
-      raise Null_Pointer
+      raise Null_Pointer "rect"
     else
       { x = C.fromCint (C.offset 0 C.Cint (C.deref r)),
         y = C.fromCint (C.offset 1 C.Cint (C.deref r)),
@@ -239,14 +268,24 @@ struct
     (C.call0 (gets_ttf "TTF_Init") () C.VOID) ()
 
   fun ttf_open_font file size =
-    (C.call2 (gets_ttf "TTF_OpenFont") (C.STRING, C.INT) C.POINTER) (file, size)
+    let
+      val f = (C.call2 (gets_ttf "TTF_OpenFont") (C.STRING, C.INT) C.POINTER) (file, size)
+    in
+      if C.fromCint f = 0 then
+        raise Load_Err file
+      else
+        f
+    end
 
   fun ttf_close_font font =
     (C.call1 (gets_ttf "TTF_CloseFont") C.POINTER C.VOID) font
 
   fun ttf_render_text_blended font text { r, g, b, a } =
+    let val text = if text = "" then "foo" else text in
     (C.call6 (gets_ttf "TTF_RenderText_Blended") (C.POINTER, C.STRING, C.INT, C.INT, C.INT, C.INT) SURFACE)
       (font, text, r, g, b, a)
+    handle (Null_Pointer s) => raise Null_Pointer (s ^ "render: " ^ text)
+    end
 end
 
 (* vim: se ai et: *)

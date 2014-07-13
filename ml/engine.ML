@@ -213,7 +213,7 @@ struct
     | string_of_state Hang = "hang"
 
   (*** Json utility ***)
-  exception Load_Err
+  exception Load_Err of string
 
   fun get_asset a k =
     Json.string_value (Json.object_get a k)
@@ -227,7 +227,8 @@ struct
         if s = "custom-rule" then
           raise Custom
         else
-          raise Load_Err
+          (print ("no int: " ^ s ^ "\n");
+          0)
 
   fun get_float_field obj n s =
     case Json.object_find obj s of
@@ -236,7 +237,8 @@ struct
         if s = "custom-rule" then
           raise Custom
         else
-          raise Load_Err
+          (print ("no float: " ^ s ^ "\n");
+          0.0)
 
   (*** SDL utility ***)
   fun load_texture r file =
@@ -282,7 +284,7 @@ struct
         end
     in
       if (Json.array_size frames) <> (Json.array_size dur) then
-        raise Load_Err
+        raise Load_Err "frames <> durations"
       else
         finish_load ()
     end
@@ -299,6 +301,7 @@ struct
     let
       val i = get_int_field src n
       val f = get_float_field src n
+      val () = print ("loading " ^ n ^ "\n")
     in {
       walk_dist = i "walk-dist",
       jump_dist = (i "jump-dist-x", i "jump-dist-y"),
@@ -324,6 +327,8 @@ struct
       fun i x = Json.integer_value (Json.array_get siz x)
       val start_dim = { x = 0, y = 0, w = i 0, h = i 1 }
       val states = [Idle, Walk, Jump, Fall, Hang]
+      (* FIXME *)
+      val states = [Idle, Idle, Idle, Idle, Idle]
       val anims = Vector.fromList (map (fn s => load_anim res n (string_of_state s)) states)
     in
       Json.decref res;

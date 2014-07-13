@@ -195,6 +195,7 @@ struct
           val tex = Sdl.create_texture_from_surface r text
         in
           Sdl.free_surface text;
+          print ("rendering `" ^ str ^ "'\n");
           { size = size, tex = tex }
         end
     in
@@ -503,6 +504,7 @@ struct
       val ms = Json.array_foreach mo f
     in
       Sdl.free_surface msg_srf;
+      print "have msgs\n";
       { tex = tex,
         box = box,
         line = line,
@@ -535,6 +537,7 @@ struct
         | switch (Vertical l, (h, v)) = (h, l::v)
       val (hor, ver) = Vector.foldl switch ([], []) lines
     in
+      print "have level\n";
       (Vector.fromList hor, Vector.fromList ver)
     end
 
@@ -624,7 +627,9 @@ struct
       val entity_res = Json.object_get game "entities"
       val entity_file = Json.string_value (Json.object_get entity_res "resource")
       val entity_path = root ^ "/" ^ E.conf_dir ^ "/" ^ entity_file
+      val () = print ("loading entities from: `" ^ entity_path ^ "'\n")
       val (entities, e_ress) = E.load_entities root entity_path r
+      val () = print "have entities\n"
       val players = init_group game entities "players" e_ress E.Idle
       val objects = init_group game entities "objects" e_ress E.Idle
       val enemies = init_group game entities "enemies" e_ress E.Walk
@@ -672,7 +677,7 @@ struct
       val screen = { x = x, y =y }
       fun init () =
         let
-          val w = Sdl.create_window "Fridge Filler" Sdl.Windowpos_Undefined Sdl.Windowpos_Undefined x y 0
+          val w = Sdl.create_window "Fridge Filler" Sdl.Windowpos_Undefined Sdl.Windowpos_Undefined x y []
           val icon_path = root ^ "/" ^ "icon.gif"
           val ico = Sdl.img_load icon_path
           val r = Sdl.create_renderer w ~1 0
@@ -685,6 +690,7 @@ struct
     in
       Sdl.ttf_init ();
       Sdl.init [Sdl.Init_Video];
+      print "start init\n";
       init ()
     end
 
