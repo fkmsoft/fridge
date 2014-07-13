@@ -7,13 +7,6 @@ sig
   type renderer = CInterface.vol
   type texture = CInterface.vol
   type font = CInterface.vol
-  type event = CInterface.vol
-
-  (* structs *)
-  type rect = { x : int, y : int, w : int, h : int }
-  type point = { x : int, y : int }
-  type color = { r : int, g : int, b : int, a : int }
-  type surface = { w : int, h : int, data : CInterface.vol }
 
   (*** constants ***)
   datatype key = Key_Left | Key_Right | Key_Space
@@ -28,7 +21,17 @@ sig
   datatype init_flag = Init_Timer | Init_Audio | Init_Video | Init_Joystick | Init_Haptic | Init_Gamecontroller | Init_Events | Init_Noparachute
   val Init_Everything : init_flag list
 
+  datatype event_type = Quit | Key_Down of key | Key_Up of key | User_Event
+
+  (* records *)
+  type rect = { x : int, y : int, w : int, h : int }
+  type point = { x : int, y : int }
+  type color = { r : int, g : int, b : int, a : int }
+  type surface = { w : int, h : int, data : CInterface.vol }
+  type event = { t : event_type, data : CInterface.vol }
+
   (*** functions ***)
+  val make_event : unit -> event
 
   (** init **)
   val init : init_flag list -> unit
@@ -123,6 +126,14 @@ struct
     | int_of_init_flag Init_Events = 0x4000
     | int_of_init_flag Init_Noparachute = 0x100000
 
+  datatype event_type = Quit | Key_Down of key | Key_Up of key | User_Event
+  fun int_of_event_type Quit = 0x100
+    | int_of_event_type (Key_Down _) = 0x300
+    | int_of_event_type (Key_Up _) = 0x301
+    | int_of_event_type User_Event = 0x8000
+
+  type event = { t : event_type, data : CInterface.vol }
+
   exception Null_Pointer of string
 
   val void_p = C.Cpointer C.Cvoid
@@ -209,6 +220,31 @@ struct
         y = C.fromCint (C.offset 1 C.Cint (C.deref p)) }
 
   val POINT = C.mkConversion point_from_c point_to_c void_p
+
+  fun make_event () =
+    let
+      val ce = C.alloc 56 C.Cchar
+      val t = User_Event
+    in
+      C.assign C.Cint (C.offset 0 C.Cint ce) (C.toCint (int_of_event_type t));
+      { t = t, data = ce }
+    end
+
+  fun event_to_c e = #data e
+
+  fun event_from_c e =
+    if C.fromCint e = 0 then
+      raise Null_Pointer "event"
+    else
+      let
+        val t = C.fromCint (C.offset 0 C.Cint (C.deref e))
+        (* TODO *)
+      in
+        { t = User_Event,
+          data = e }
+      end
+
+  val EVENT = C.mkConversion event_from_c event_to_c void_p
 
   fun rect_to_c r =
     let

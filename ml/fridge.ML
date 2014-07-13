@@ -79,13 +79,13 @@ sig
   val draw_message : Sdl.renderer -> Sdl.texture -> message -> Sdl.rect -> Sdl.rect -> unit
 
   (** high level game **)
-(* TODO val process_event : Sdl.event -> game_event *)
+  val clear_event : game_event
+  val process_event : Sdl.event_type -> game_event
   val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
   val enemy_movement : Engine.level -> Sdl.rect -> Engine.entity_state vector -> Engine.entity_state vector
   val update_gamestate : session -> game_event -> game_state -> game_state
   val render : session -> game_state -> unit
   val clear_game : game_state -> game_state
-  val clear_event : game_event
 
   (** utility **)
   val load_finish : Sdl.renderer -> Json.t -> Sdl.font -> int -> finish
@@ -259,6 +259,24 @@ struct
     end
 
   (** high level game **)
+  val clear_event = {
+    player = E.clear_order,
+    exit = false,
+    toggle_debug = false,
+    toggle_pause = false,
+    toggle_terrain = false,
+    reload_conf = false,
+    keyboard = false,
+    reset = false }
+
+  fun process_event Sdl.User_Event = clear_event
+    | process_event Sdl.Quit = clear_event
+    | process_event (Sdl.Key_Up k) =
+      case k of
+        Sdl.Key_Right => clear_event |
+        Sdl.Key_Left => clear_event |
+        Sdl.Key_Space => clear_event
+
   fun set_group_state st g =
     Vector.map (fn e => E.load_state e st) g
 
@@ -436,16 +454,6 @@ struct
     msg_timeout = 0,
     run = #run gs,
     debug = E.clear_debug (#font (#debug gs)) (#terrain_collision (#debug gs)) }
-
-  val clear_event = {
-    player = E.clear_order,
-    exit = false,
-    toggle_debug = false,
-    toggle_pause = false,
-    toggle_terrain = false,
-    reload_conf = false,
-    keyboard = false,
-    reset = false }
 
   (** utility **)
   fun load_finish r game font fontsize =
