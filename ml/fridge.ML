@@ -215,7 +215,7 @@ struct
           val tex = Sdl.create_texture_from_surface r text
         in
           Sdl.free_surface text;
-          print ("rendering `" ^ str ^ "'\n");
+          print ("rendering message `" ^ str ^ "'\n");
           { size = size, tex = tex }
         end
     in
@@ -353,7 +353,7 @@ struct
                 entities = #entities gs,
                 msg = #msg gs,
                 msg_timeout = #msg_timeout gs,
-                run = #run gs,
+                run = Mode_Logo,
                 debug = #debug gs }
           end
         | switch Mode_Intro =
@@ -370,7 +370,7 @@ struct
                 entities = #entities gs,
                 msg = #msg gs,
                 msg_timeout = #msg_timeout gs,
-                run = #run gs,
+                run = Mode_Intro,
                 debug = #debug gs }
           end
         | switch Mode_Game =
@@ -532,7 +532,6 @@ struct
       val ms = Json.array_foreach mo f
     in
       Sdl.free_surface msg_srf;
-      print "have msgs\n";
       { tex = tex,
         box = box,
         line = line,
@@ -565,7 +564,6 @@ struct
         | switch (Vertical l, (h, v)) = (h, l::v)
       val (hor, ver) = Vector.foldl switch ([], []) lines
     in
-      print "have level\n";
       (Vector.fromList hor, Vector.fromList ver)
     end
 
@@ -657,7 +655,6 @@ struct
       val entity_path = root ^ "/" ^ E.conf_dir ^ "/" ^ entity_file
       val () = print ("loading entities from: `" ^ entity_path ^ "'\n")
       val (entities, e_ress) = E.load_entities root entity_path r
-      val () = print "have entities\n"
       val players = init_group game entities "players" e_ress E.Idle
       val objects = init_group game entities "objects" e_ress E.Idle
       val enemies = init_group game entities "enemies" e_ress E.Walk
@@ -718,7 +715,6 @@ struct
     in
       Sdl.ttf_init ();
       Sdl.init [Sdl.Init_Video];
-      print "start init\n";
       init ()
     end
 
@@ -733,12 +729,15 @@ struct
             val ge = case Sdl.poll_event () of
               SOME ev => process_event (#t ev) |
               NONE => clear_event
-            val gs' = if ticks - old_ticks >= tick then
-                game_tick gs ge
+            val slept = (ticks - old_ticks)
+            val (ticks', gs') = if slept >= tick then
+                (ticks, game_tick gs ge)
               else
-                gs
+                (old_ticks, gs)
           in
-            loop ticks gs'
+            render s gs;
+            Sdl.delay (tick div 4);
+            loop ticks' gs'
           end
       in
         loop (Sdl.get_ticks ()) gs;

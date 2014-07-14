@@ -227,8 +227,8 @@ struct
         if s = "custom-rule" then
           raise Custom
         else
-          (print ("no int: " ^ s ^ "\n");
-          0)
+          (* TODO print ("no int: " ^ s ^ "\n"); *)
+          0
 
   fun get_float_field obj n s =
     case Json.object_find obj s of
@@ -237,8 +237,8 @@ struct
         if s = "custom-rule" then
           raise Custom
         else
-          (print ("no float: " ^ s ^ "\n");
-          0.0)
+          (* TODO print ("no float: " ^ s ^ "\n"); *)
+          0.0
 
   (*** SDL utility ***)
   fun load_texture r file =
@@ -433,31 +433,33 @@ struct
     let
       val a = #anim es
       val ar = Vector.sub (#anim (#rule es), int_of_state (#st es))
-      val remain = (#remaining a) - 1
+      val remaining = (#remaining a) - 1
+      val a' =
+        if remaining < 0 then
+          let
+            val i = (1 + #pos a) mod (Vector.length (#frames ar))
+          in
+            { pos = i,
+              frame = Vector.sub (#frames ar, i),
+              remaining = Vector.sub (#duration ar, i) }
+          end
+        else
+          { pos = #pos a,
+            frame = #frame a,
+            remaining = remaining }
     in
-      if remain < 0 then
-        let
-          val i = (#pos a + 1) mod (Vector.length (#frames ar))
-          val a' = {
-            pos = i,
-            frame = Vector.sub (#frames ar, i),
-            remaining = Vector.sub (#duration ar, i) }
-        in
-          { anim = a',
-            rule = #rule es,
-            tex = #tex es,
-            active = #active es,
-            dir = #dir es,
-            st = #st es,
-            hitbox = #hitbox es,
-            pos = #pos es,
-            spawn = #spawn es,
-            jump_timeout = #jump_timeout es,
-            jump_type = #jump_type es,
-            fall_time = #fall_time es }
-        end
-      else
-        es
+      { anim = a',
+        rule = #rule es,
+        tex = #tex es,
+        active = #active es,
+        dir = #dir es,
+        st = #st es,
+        hitbox = #hitbox es,
+        pos = #pos es,
+        spawn = #spawn es,
+        jump_timeout = #jump_timeout es,
+        jump_type = #jump_type es,
+        fall_time = #fall_time es }
     end
 
   fun kick_entity es h v =

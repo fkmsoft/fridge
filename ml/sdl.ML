@@ -45,6 +45,7 @@ sig
 
   (** time & events **)
   val get_ticks : unit -> int
+  val delay : int -> unit
   val poll_event : unit -> event option
 
   (** textures & surfaces **)
@@ -195,13 +196,16 @@ struct
   fun get_ticks () =
     (C.call0 (gets "SDL_GetTicks") () C.INT) ()
 
+  fun delay ms =
+    (C.call1 (gets "SDL_Delay") C.INT C.VOID) ms
+
   fun make_event () =
     let
       val ce = C.alloc 56 C.Cchar
       val t = User_Event
     in
       C.assign C.Cint (C.offset 0 C.Cint ce) (C.toCint (int_of_event_type t));
-      { t = t, data = ce }
+      { t = t, data = C.address ce }
     end
 
   fun event_to_c e = #data e
