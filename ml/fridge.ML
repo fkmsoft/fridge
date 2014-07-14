@@ -68,6 +68,10 @@ sig
   val init_group : Json.t -> Json.t -> string -> (Sdl.texture * Engine.entity_rule) vector -> Engine.state -> Engine.entity_state vector
   val init_game : string -> (session * game_state)
 
+  (** shutdown **)
+  val end_session : session -> unit
+  val destroy_gamestate : game_state -> unit
+
   (** collisions **)
   val in_rect : Sdl.point -> Sdl.rect -> bool
   val have_collision : Sdl.rect -> Sdl.rect -> bool
@@ -92,6 +96,9 @@ sig
   val load_asset_surf : Json.t -> string -> string -> Sdl.surface
   val load_messages : Json.t -> Sdl.font -> int -> string -> Sdl.point -> Sdl.renderer -> msg_info
   val load_collisions : Json.t -> Engine.line vector * Engine.line vector
+
+  (** main **)
+  val main : string -> unit
 end
 
 structure Fridge : FRIDGE =
@@ -166,6 +173,19 @@ struct
     | int_of_group Group_Player = 2
 
   (*** functions ***)
+
+  (** shutdown **)
+  fun end_session s = (
+    E.destroy_level (#level s);
+    Sdl.destroy_texture (#background (#level s));
+    Sdl.destroy_renderer (#r s);
+    Sdl.destroy_window (#w s);
+    Sdl.quit ())
+
+  fun destroy_gamestate gs =
+    case (#font (#debug gs)) of
+      SOME font => Sdl.ttf_close_font font |
+      NONE => ()
 
   (** collisions **)
   fun in_rect p r =
@@ -624,7 +644,7 @@ struct
       val fnt_path = root ^ "/" ^ E.asset_dir ^ "/" ^ (Json.string_value (Json.object_get fnt "resource"))
       val fnt_siz = Json.integer_value (Json.object_get fnt "size")
       val font = Sdl.ttf_open_font fnt_path fnt_siz
-      val debug_font = Sdl.ttf_open_font "debug_font.ttf" 14
+      val debug_font = (SOME (Sdl.ttf_open_font "debug_font.ttf" 14)) handle Load_Err => NONE
       val finish = load_finish r game font fnt_siz
       val msg = load_messages game font fnt_siz root screen r
       val lvl = Json.object_get game "level"
@@ -702,6 +722,29 @@ struct
       init ()
     end
 
+    (** main **)
+    fun main root =
+      let
+        val (s, gs) = init_game root
+        fun game_tick gs ge = update_gamestate s ge gs
+        fun loop old_ticks gs =
+          let
+            val ticks = Sdl.get_ticks ()
+            val ge = case Sdl.poll_event () of
+              SOME ev => process_event (#t ev) |
+              NONE => clear_event
+            val gs' = if ticks - old_ticks >= tick then
+                game_tick gs ge
+              else
+                gs
+          in
+            loop ticks gs'
+          end
+      in
+        loop (Sdl.get_ticks ()) gs;
+        destroy_gamestate gs;
+        end_session s
+      end
 end
 
 (* vim: se ai et: *)

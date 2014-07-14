@@ -69,7 +69,7 @@ sig
     show_terrain_collision : bool,
     terrain_collision : Sdl.texture,
     message_positions : bool,
-    font : Sdl.font }
+    font : Sdl.font option }
 
   (*** magic constants ***)
   val asset_dir : string
@@ -86,7 +86,7 @@ sig
   val load_entity_resource : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
   val load_state : entity_state -> state -> entity_state
   val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> state -> entity_state
-  val clear_debug : Sdl.font -> Sdl.texture -> debug_state
+  val clear_debug : Sdl.font option -> Sdl.texture -> debug_state
 
   (*** teardown ***)
   val destroy_level : level -> unit
@@ -201,7 +201,7 @@ struct
     show_terrain_collision : bool,
     terrain_collision : Sdl.texture,
     message_positions : bool,
-    font : Sdl.font }
+    font : Sdl.font option }
 
   (*** magic constants ***)
   val asset_dir = "assets"

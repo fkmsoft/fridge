@@ -33,11 +33,19 @@ sig
   (*** functions ***)
   val make_event : unit -> event
 
-  (** init **)
+  (** init  & shutdown **)
   val init : init_flag list -> unit
   val create_window : string -> window_pos -> window_pos -> int -> int -> window_flag list -> window
   val create_renderer : window -> int -> int -> renderer
   val set_window_icon : window -> surface -> unit
+
+  val destroy_renderer : renderer -> unit
+  val destroy_window : window -> unit
+  val quit : unit -> unit
+
+  (** time & events **)
+  val get_ticks : unit -> int
+  val poll_event : unit -> event option
 
   (** textures & surfaces **)
   val create_texture_from_surface : renderer -> surface -> texture
@@ -175,6 +183,54 @@ struct
       (w, i)
     handle (Null_Pointer s) => raise Null_Pointer (s ^ "icon")
 
+  fun destroy_renderer r =
+    (C.call1 (gets "SDL_DestroyRenderer") C.POINTER C.VOID) r
+
+  fun destroy_window w =
+    (C.call1 (gets "SDL_DestroyWindow") C.POINTER C.VOID) w
+
+  fun quit () =
+    (C.call0 (gets "SDL_Quit") () C.VOID) ()
+
+  fun get_ticks () =
+    (C.call0 (gets "SDL_GetTicks") () C.INT) ()
+
+  fun make_event () =
+    let
+      val ce = C.alloc 56 C.Cchar
+      val t = User_Event
+    in
+      C.assign C.Cint (C.offset 0 C.Cint ce) (C.toCint (int_of_event_type t));
+      { t = t, data = ce }
+    end
+
+  fun event_to_c e = #data e
+
+  fun event_from_c e =
+    if C.fromCint e = 0 then
+      raise Null_Pointer "event"
+    else
+      let
+        val t = C.fromCint (C.offset 0 C.Cint (C.deref e))
+        (* TODO *)
+      in
+        { t = User_Event,
+          data = e }
+      end
+
+  val EVENT = C.mkConversion event_from_c event_to_c void_p
+
+  fun poll_event () =
+    let
+      val ev = make_event ()
+      val have_event = (C.call1 (gets "SDL_PollEvent") EVENT C.INT) ev
+    in
+      if have_event = 0 then
+        NONE
+      else
+        SOME ev
+    end
+
   fun create_texture_from_surface r s =
     (C.call2 (gets "SDL_CreateTextureFromSurface") (C.POINTER, SURFACE) C.POINTER)
       (r, s)
@@ -220,31 +276,6 @@ struct
         y = C.fromCint (C.offset 1 C.Cint (C.deref p)) }
 
   val POINT = C.mkConversion point_from_c point_to_c void_p
-
-  fun make_event () =
-    let
-      val ce = C.alloc 56 C.Cchar
-      val t = User_Event
-    in
-      C.assign C.Cint (C.offset 0 C.Cint ce) (C.toCint (int_of_event_type t));
-      { t = t, data = ce }
-    end
-
-  fun event_to_c e = #data e
-
-  fun event_from_c e =
-    if C.fromCint e = 0 then
-      raise Null_Pointer "event"
-    else
-      let
-        val t = C.fromCint (C.offset 0 C.Cint (C.deref e))
-        (* TODO *)
-      in
-        { t = User_Event,
-          data = e }
-      end
-
-  val EVENT = C.mkConversion event_from_c event_to_c void_p
 
   fun rect_to_c r =
     let
