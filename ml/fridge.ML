@@ -84,7 +84,7 @@ sig
 
   (** high level game **)
   val clear_event : game_event
-  val process_event : Sdl.event_type -> game_event
+  val process_event : Sdl.event_type -> game_event -> game_event
   val set_group_state : Engine.state -> Engine.entity_state vector -> Engine.entity_state vector
   val enemy_movement : Engine.level -> Sdl.rect -> Engine.entity_state vector -> Engine.entity_state vector
   val update_gamestate : session -> game_event -> game_state -> game_state
@@ -289,13 +289,30 @@ struct
     keyboard = false,
     reset = false }
 
-  fun process_event Sdl.User_Event = clear_event
-    | process_event Sdl.Quit = clear_event
-    | process_event (Sdl.Key_Up k) =
-      case k of
-        Sdl.Key_Right => clear_event |
-        Sdl.Key_Left => clear_event |
-        Sdl.Key_Space => clear_event
+  fun process_event Sdl.User_Event e = e
+    | process_event (Sdl.Key_Down _) e = e
+    | process_event Sdl.Quit e = {
+      exit = true,
+      player = #player e,
+      toggle_debug = #toggle_debug e,
+      toggle_pause = #toggle_pause e,
+      toggle_terrain = #toggle_terrain e,
+      reload_conf = #reload_conf e,
+      keyboard = #keyboard e,
+      reset = #reset e }
+    | process_event (Sdl.Key_Up k) e = {
+      exit = (k = Sdl.Key_Q orelse #exit e),
+      player = {
+        move_left = (k = Sdl.Key_Left orelse #move_left (#player e)),
+        move_right = (k = Sdl.Key_Right orelse #move_right (#player e)),
+        move_jump = (k = Sdl.Key_Space orelse #move_jump (#player e)),
+        walk = (k = Sdl.Key_Left orelse k = Sdl.Key_Right orelse #walk (#player e)) },
+      toggle_debug = (k = Sdl.Key_D orelse #toggle_debug e),
+      toggle_pause = (k = Sdl.Key_P orelse #toggle_pause e),
+      toggle_terrain = #toggle_terrain e,
+      reload_conf = (k = Sdl.Key_U orelse #reload_conf e),
+      keyboard = true,
+      reset = (k = Sdl.Key_R orelse #reset e) }
 
   fun set_group_state st g =
     Vector.map (fn e => E.load_state e st) g
@@ -660,7 +677,7 @@ struct
       val enemies = init_group game entities "enemies" e_ress E.Walk
       val intro = load_intro screen entities "intro" e_ress
       val logo = load_intro screen entities "logo" e_ress
-      val terrain_collision = E.load_texture r (root ^ "/assets/level1.gif")
+      val terrain_collision = E.load_texture r (root ^ "/assets/level1.gif") (* FIXME *)
     in
       Sdl.ttf_close_font font;
       Json.decref level;
@@ -723,12 +740,12 @@ struct
       let
         val (s, gs) = init_game root
         fun game_tick gs ge = update_gamestate s ge gs
-        fun loop old_ticks gs =
+        fun loop old_ticks old_ge gs =
           let
             val ticks = Sdl.get_ticks ()
             val ge = case Sdl.poll_event () of
-              SOME ev => process_event (#t ev) |
-              NONE => clear_event
+              SOME ev => process_event (#t ev) old_ge |
+              NONE => old_ge
             val slept = (ticks - old_ticks)
             val (ticks', gs') = if slept >= tick then
                 (ticks, game_tick gs ge)
@@ -737,10 +754,10 @@ struct
           in
             render s gs;
             Sdl.delay (tick div 4);
-            loop ticks' gs'
+            loop ticks' ge gs'
           end
       in
-        loop (Sdl.get_ticks ()) gs;
+        loop (Sdl.get_ticks ()) clear_event gs;
         destroy_gamestate gs;
         end_session s
       end

@@ -9,7 +9,7 @@ sig
   type font = CInterface.vol
 
   (*** constants ***)
-  datatype key = Key_Left | Key_Right | Key_Space
+  datatype key = Key_Unkown | Key_Left | Key_Right | Key_Space | Key_Q | Key_B | Key_U | Key_P | Key_R | Key_D
 
   datatype renderer_flip = Flip_None | Flip_Horizontal | Flip_Vertical
 
@@ -96,7 +96,7 @@ struct
   val gets_img = C.get_sym "/usr/lib/libSDL2_image.so"
   val gets_ttf = C.get_sym "/usr/lib/libSDL2_ttf.so"
 
-  datatype key = Key_Left | Key_Right | Key_Space
+  datatype key = Key_Unkown | Key_Left | Key_Right | Key_Space | Key_Q | Key_B | Key_U | Key_P | Key_R | Key_D
 
   datatype renderer_flip = Flip_None | Flip_Horizontal | Flip_Vertical
   fun int_of_flip Flip_None = 0
@@ -140,6 +140,26 @@ struct
     | int_of_event_type (Key_Down _) = 0x300
     | int_of_event_type (Key_Up _) = 0x301
     | int_of_event_type User_Event = 0x8000
+
+  val scancode_offset = 0x40000000 (* 1<<30 *)
+
+  fun key_of_keycode 0x20 = Key_Space
+    | key_of_keycode 0x62 = Key_B
+    | key_of_keycode 0x64 = Key_D
+    | key_of_keycode 0x70 = Key_P
+    | key_of_keycode 0x71 = Key_Q
+    | key_of_keycode 0x72 = Key_R
+    | key_of_keycode 0x75 = Key_U
+    | key_of_keycode i =
+      case i - scancode_offset of
+        79 => Key_Right |
+        80 => Key_Left |
+        _ => Key_Unkown
+
+  fun parse_event 0x100 _ = Quit
+    | parse_event 0x300 k = Key_Down (key_of_keycode k)
+    | parse_event 0x301 k = Key_Up (key_of_keycode k)
+    | parse_event _ _ = User_Event
 
   type event = { t : event_type, data : CInterface.vol }
 
@@ -215,10 +235,21 @@ struct
       raise Null_Pointer "event"
     else
       let
-        val t = C.fromCint (C.offset 0 C.Cint (C.deref e))
-        (* TODO *)
+        val typ = C.fromCint (C.offset 0 C.Cint (C.deref e))
+        val timestamp = C.fromCint (C.offset 1 C.Cint (C.deref e))
+        val window_id = C.fromCint (C.offset 2 C.Cint (C.deref e))
+        val flags = C.fromCint (C.offset 3 C.Cint (C.deref e))
+        val scancode = C.fromCint (C.offset 4 C.Cint (C.deref e))
+        val keycode = C.fromCint (C.offset 5 C.Cint (C.deref e))
+        val modifiers = C.fromCshort (C.offset 6 C.Cint (C.deref e))
+        val t = parse_event typ keycode
+        val () = print ("event: " ^ (case t of
+          Quit => "quit\n" |
+          Key_Down _ => "keydown\n" |
+          Key_Up _ => "keyup\n" |
+          User_Event => "user\n"))
       in
-        { t = User_Event,
+        { t = t,
           data = e }
       end
 
@@ -232,7 +263,7 @@ struct
       if have_event = 0 then
         NONE
       else
-        SOME ev
+        SOME (event_from_c (#data ev))
     end
 
   fun create_texture_from_surface r s =
