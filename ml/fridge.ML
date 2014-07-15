@@ -289,8 +289,15 @@ struct
     keyboard = false,
     reset = false }
 
-  fun process_event Sdl.User_Event e = e
-    | process_event (Sdl.Key_Down _) e = e
+  fun process_event (Sdl.Key_Down _) e = {
+      exit = #exit e,
+      player = #player e,
+      toggle_debug = #toggle_debug e,
+      toggle_pause = #toggle_pause e,
+      toggle_terrain = #toggle_terrain e,
+      reload_conf = #reload_conf e,
+      keyboard = true,
+      reset = #reset e }
     | process_event Sdl.Quit e = {
       exit = true,
       player = #player e,
@@ -313,6 +320,7 @@ struct
       reload_conf = (k = Sdl.Key_U orelse #reload_conf e),
       keyboard = true,
       reset = (k = Sdl.Key_R orelse #reset e) }
+    | process_event _ e = e
 
   fun set_group_state st g =
     Vector.map (fn e => E.load_state e st) g
@@ -754,7 +762,10 @@ struct
           in
             render s gs;
             Sdl.delay (tick div 4);
-            loop ticks' ge gs'
+            if (#run gs') = Mode_Exit then
+              ()
+            else
+              loop ticks' ge gs'
           end
       in
         loop (Sdl.get_ticks ()) clear_event gs;

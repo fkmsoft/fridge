@@ -21,7 +21,13 @@ sig
   datatype init_flag = Init_Timer | Init_Audio | Init_Video | Init_Joystick | Init_Haptic | Init_Gamecontroller | Init_Events | Init_Noparachute
   val Init_Everything : init_flag list
 
-  datatype event_type = Quit | Key_Down of key | Key_Up of key | User_Event
+  datatype app_event = Terminating | Low_Memory | Will_Enter_Background | Did_Enter_Background | Will_Enter_Foreground | Did_Enter_Foreground
+  datatype mouse_event = Motion | Button_Down | Button_Up | Wheel
+  datatype joystick_event = J_Axis_Motion | J_Ball_Motion | J_Hat_Motion | J_Button_Down | J_Button_Up | J_Device_Added | J_Device_Removed
+  datatype controller_event = C_Axis_Motion | C_Button_Down | C_Button_Up | C_Device_Added | C_Device_Removed | C_Device_Remapped
+  datatype touch_event = F_Down | F_Up | F_Motion
+  datatype gesture_event = Dollar | Record | Multi
+  datatype event_type = Quit | App of app_event | Window | Sys_WM | Mouse of mouse_event | Joystick of joystick_event | Controller of controller_event | Finger of touch_event | Gesture of gesture_event | Clipboard | Drop_File | Render_Targets_Reset | Key_Down of key | Key_Up of key | User_Event | Text_Editing | Text_Input
 
   (* records *)
   type rect = { x : int, y : int, w : int, h : int }
@@ -135,10 +141,29 @@ struct
     | int_of_init_flag Init_Events = 0x4000
     | int_of_init_flag Init_Noparachute = 0x100000
 
-  datatype event_type = Quit | Key_Down of key | Key_Up of key | User_Event
+  datatype app_event = Terminating | Low_Memory | Will_Enter_Background | Did_Enter_Background | Will_Enter_Foreground | Did_Enter_Foreground
+  datatype mouse_event = Motion | Button_Down | Button_Up | Wheel
+  datatype joystick_event = J_Axis_Motion | J_Ball_Motion | J_Hat_Motion | J_Button_Down | J_Button_Up | J_Device_Added | J_Device_Removed
+  datatype controller_event = C_Axis_Motion | C_Button_Down | C_Button_Up | C_Device_Added | C_Device_Removed | C_Device_Remapped
+  datatype touch_event = F_Down | F_Up | F_Motion
+  datatype gesture_event = Dollar | Record | Multi
+  datatype event_type = Quit | App of app_event | Window | Sys_WM | Mouse of mouse_event | Joystick of joystick_event | Controller of controller_event | Finger of touch_event | Gesture of gesture_event | Clipboard | Drop_File | Render_Targets_Reset | Key_Down of key | Key_Up of key | User_Event | Text_Editing | Text_Input
   fun int_of_event_type Quit = 0x100
+    | int_of_event_type (App _) = 0x101
+    | int_of_event_type Window = 0x200
+    | int_of_event_type Sys_WM = 0x201
     | int_of_event_type (Key_Down _) = 0x300
     | int_of_event_type (Key_Up _) = 0x301
+    | int_of_event_type Text_Editing = 0x302
+    | int_of_event_type Text_Input = 0x303
+    | int_of_event_type (Mouse _) = 0x400
+    | int_of_event_type (Joystick _) = 0x600
+    | int_of_event_type (Controller _) = 0x650
+    | int_of_event_type (Finger _) = 0x700
+    | int_of_event_type (Gesture _) = 0x800
+    | int_of_event_type Clipboard = 0x900
+    | int_of_event_type Drop_File = 0x1000
+    | int_of_event_type Render_Targets_Reset = 0x2000
     | int_of_event_type User_Event = 0x8000
 
   val scancode_offset = 0x40000000 (* 1<<30 *)
@@ -156,16 +181,67 @@ struct
         80 => Key_Left |
         _ => Key_Unkown
 
+  exception Unknown_Event of int
   fun parse_event 0x100 _ = Quit
+    (* app events *)
+    | parse_event 0x101 _ = App Terminating
+    | parse_event 0x102 _ = App Low_Memory
+    | parse_event 0x103 _ = App Will_Enter_Background
+    | parse_event 0x104 _ = App Did_Enter_Background
+    | parse_event 0x105 _ = App Will_Enter_Foreground
+    | parse_event 0x106 _ = App Did_Enter_Foreground
+    (* window system events *)
+    | parse_event 0x200 _ = Window
+    | parse_event 0x201 _ = Sys_WM
+    (* keyboard events *)
     | parse_event 0x300 k = Key_Down (key_of_keycode k)
     | parse_event 0x301 k = Key_Up (key_of_keycode k)
-    | parse_event _ _ = User_Event
+    | parse_event 0x302 k = Text_Editing
+    | parse_event 0x303 k = Text_Input
+    (* mouse events *)
+    | parse_event 0x400 _ = Mouse Motion
+    | parse_event 0x401 _ = Mouse Button_Down
+    | parse_event 0x402 _ = Mouse Button_Up
+    | parse_event 0x403 _ = Mouse Wheel
+    (* joystick events *)
+    | parse_event 0x600 _ = Joystick J_Axis_Motion
+    | parse_event 0x601 _ = Joystick J_Ball_Motion
+    | parse_event 0x602 _ = Joystick J_Hat_Motion
+    | parse_event 0x603 _ = Joystick J_Button_Down
+    | parse_event 0x604 _ = Joystick J_Button_Up
+    | parse_event 0x605 _ = Joystick J_Device_Added
+    | parse_event 0x606 _ = Joystick J_Device_Removed
+    (* controller events *)
+    | parse_event 0x650 _ = Controller C_Axis_Motion
+    | parse_event 0x650 _ = Controller C_Button_Down
+    | parse_event 0x650 _ = Controller C_Button_Up
+    | parse_event 0x650 _ = Controller C_Device_Added
+    | parse_event 0x650 _ = Controller C_Device_Removed
+    | parse_event 0x650 _ = Controller C_Device_Remapped
+    (* touch events *)
+    | parse_event 0x700 _ = Finger F_Down
+    | parse_event 0x701 _ = Finger F_Up
+    | parse_event 0x702 _ = Finger F_Motion
+    (* gesture events *)
+    | parse_event 0x800 _ = Gesture Dollar
+    | parse_event 0x801 _ = Gesture Record
+    | parse_event 0x802 _ = Gesture Multi
+    (* clipboard events *)
+    | parse_event 0x900 _ = Clipboard
+    (* drag & drop events *)
+    | parse_event 0x1000 _ = Drop_File
+    (* render events *)
+    | parse_event 0x2000 _ = Render_Targets_Reset
+    (* user event *)
+    | parse_event 0x8000 _ = User_Event
+    | parse_event e _ = raise Unknown_Event e
 
   type event = { t : event_type, data : CInterface.vol }
 
   exception Null_Pointer of string
 
   val void_p = C.Cpointer C.Cvoid
+  val null_p = C.toClong 0
 
   fun surface_from_c s =
     if C.fromCint s = 0 then
@@ -244,10 +320,21 @@ struct
         val modifiers = C.fromCshort (C.offset 6 C.Cint (C.deref e))
         val t = parse_event typ keycode
         val () = print ("event: " ^ (case t of
-          Quit => "quit\n" |
-          Key_Down _ => "keydown\n" |
-          Key_Up _ => "keyup\n" |
-          User_Event => "user\n"))
+          Quit => "quit" |
+          App _ => "app" |
+          Window => "window" | Sys_WM => "sys wm" |
+          Text_Editing => "text edit" | Text_Input => "text input" |
+          Mouse _ => "mouse" |
+          Joystick _ => "joystick" |
+          Controller _ => "controller" |
+          Finger _ => "touch" |
+          Gesture _ => "gesture" |
+          Clipboard => "clipboard" |
+          Drop_File => "drop file" |
+          Render_Targets_Reset => "render reset" |
+          Key_Down _ => "keydown " ^ (Int.toString keycode) |
+          Key_Up _ => "keyup " ^ (Int.toString keycode) |
+          User_Event => "user") ^ "\n")
       in
         { t = t,
           data = e }
@@ -351,8 +438,8 @@ struct
   fun render_copy r t src dst =
     let
       val lower_rc = C.call4 (gets "SDL_RenderCopy") (C.POINTER, C.POINTER, C.POINTER, C.POINTER) C.VOID
-      fun maybe_loadrect NONE = C.toCint 0
-        | maybe_loadrect (SOME r) = rect_to_c r
+      fun maybe_loadrect NONE = null_p
+        | maybe_loadrect (SOME rect) = rect_to_c rect
       val c_src = maybe_loadrect src
       val c_dst = maybe_loadrect dst
     in
