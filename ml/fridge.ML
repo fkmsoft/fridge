@@ -31,13 +31,14 @@ sig
     finish : finish,
     screen : Sdl.point }
 
-  datatype group = Group_Player | Group_Objects | Group_Enemies
-
   type game_state = {
     need_to_collect : int,
     logo : Engine.entity_state,
     intro : Engine.entity_state,
-    entities : Engine.entity_state vector vector,
+    entities : {
+      players: Engine.entity_state vector,
+      objects: Engine.entity_state vector,
+      enemies: Engine.entity_state vector },
     msg : message option,
     msg_timeout : int,
     run : mode,
@@ -59,7 +60,6 @@ sig
   val rootvar : string
   val game_conf : string
   val string_of_frq : msg_frequency -> string
-  val int_of_group : group -> int
 
   (*** functions ***)
   (** high level init **)
@@ -136,13 +136,14 @@ struct
     finish : finish,
     screen : Sdl.point }
 
-  datatype group = Group_Player | Group_Objects | Group_Enemies
-
   type game_state = {
     need_to_collect : int,
     logo : Engine.entity_state,
     intro : Engine.entity_state,
-    entities : Engine.entity_state vector vector,
+    entities : {
+      players: Engine.entity_state vector,
+      objects: Engine.entity_state vector,
+      enemies: Engine.entity_state vector },
     msg : message option,
     msg_timeout : int,
     run : mode,
@@ -167,10 +168,6 @@ struct
   fun string_of_frq Msg_Always = "always"
     | string_of_frq Msg_Never = "never"
     | string_of_frq Msg_Once = "once"
-
-  fun int_of_group Group_Objects = 0
-    | int_of_group Group_Enemies = 1
-    | int_of_group Group_Player = 2
 
   (*** functions ***)
 
@@ -407,10 +404,10 @@ struct
             val show_terrain_collision = if #toggle_terrain ev andalso debug then not (#show_terrain_collision d) else #show_terrain_collision d
             fun animate e = if #active e then E.tick_animation e else e
             val entities = #entities gs
-            val objects = Vector.map animate (Vector.sub (entities, int_of_group Group_Objects))
-            val players = Vector.map animate (Vector.sub (entities, int_of_group Group_Player))
+            val objects = Vector.map animate (#objects entities)
+            val players = Vector.map animate (#players entities)
             val player = Vector.sub (players, 0)
-            val enemies = Vector.map animate (set_group_state (if debug andalso pause then E.Idle else E.Walk) (Vector.sub (entities, int_of_group Group_Enemies)))
+            val enemies = Vector.map animate (set_group_state (if debug andalso pause then E.Idle else E.Walk) (#enemies entities))
             val level = #level s
             val moved_enemies = if not debug andalso not pause then
                 enemy_movement level (E.entity_hitbox player) enemies
@@ -435,7 +432,7 @@ struct
             { need_to_collect = #need_to_collect gs,
               intro = #intro gs,
               logo = #logo gs,
-              entities = #entities gs,
+              entities = {players = Vector.fromList [player], objects = objects, enemies = enemies},
               msg = msg,
               msg_timeout = msg_timeout,
               run = run,
@@ -456,7 +453,7 @@ struct
 
   fun render s gs =
     let
-      val player = Vector.sub (Vector.sub (#entities gs, int_of_group Group_Player), 0)
+      val player = Vector.sub (#players (#entities gs), 0)
       val pos = #pos player
       val spawn = #spawn player
       val screen = {
@@ -466,6 +463,11 @@ struct
         h = #y (#screen s) }
       val scr = { x = 0, y = 0, w = #w screen, h = #h screen }
       val r = #r s
+      fun draw_group g =
+        Vector.app (fn e =>
+          if #active e then
+            E.draw_entity r screen e (SOME (#debug gs))
+          else ()) g
       fun render_mode Mode_Logo = E.draw_entity r scr (#logo gs) NONE
         | render_mode Mode_Intro = E.draw_entity r scr (#intro gs) NONE
         | render_mode Mode_Game =
@@ -473,11 +475,8 @@ struct
             val msg = #msg s
           in
             E.draw_background r (#background (#level s)) screen;
-            Vector.app (fn g =>
-              Vector.app (fn e =>
-                if #active e then
-                  E.draw_entity r screen e (SOME (#debug gs))
-                else ()) g) (#entities gs);
+            draw_group (#objects (#entities gs));
+            draw_group (#enemies (#entities gs));
             E.draw_entity r screen player (SOME (#debug gs));
             case #msg gs of
               SOME m => draw_message r (#tex msg) m (#box msg) (#line msg) |
@@ -491,7 +490,7 @@ struct
     end
 
   fun clear_game gs = {
-    need_to_collect = Vector.length (Vector.sub (#entities gs, int_of_group Group_Objects)),
+    need_to_collect = Vector.length (#objects (#entities gs)),
     logo = #logo gs,
     intro = #intro gs,
     entities = #entities gs,
@@ -704,7 +703,7 @@ struct
        { need_to_collect = 0,
          logo = logo,
          intro = intro,
-         entities = Vector.fromList([players, objects, enemies]),
+         entities = {players = players, objects = objects, enemies = enemies},
          msg = NONE,
          msg_timeout = 0,
          run =
@@ -755,17 +754,17 @@ struct
               SOME ev => process_event (#t ev) old_ge |
               NONE => old_ge
             val slept = (ticks - old_ticks)
-            val (ticks', gs') = if slept >= tick then
-                (ticks, game_tick gs ge)
+            val (ticks', gs', ge') = if slept >= tick then
+                (ticks, game_tick gs ge, clear_event)
               else
-                (old_ticks, gs)
+                (old_ticks, gs, ge)
           in
             render s gs;
             Sdl.delay (tick div 4);
             if (#run gs') = Mode_Exit then
               ()
             else
-              loop ticks' ge gs'
+              loop ticks' ge' gs'
           end
       in
         loop (Sdl.get_ticks ()) clear_event gs;

@@ -922,8 +922,33 @@ struct
         w = w, h =h }
       val flip = #dir s = Left
       val p = { x = 0, y = 0 }
+      val pink = { r = 255, g = 105, b = 180, a = 255 }
+      val lime = { r =  23, g = 225, b =  38, a = 255 }
+      fun debug_render d =
+        (if (#frames d) then
+          (Sdl.set_render_draw_color r pink;
+          Sdl.render_draw_rect r dst)
+        else ();
+        if (#hitboxes d) then
+          let
+            val hb = entity_hitbox s
+            val box = {
+              x = (#x hb) - #x scr,
+              y = (#y hb) - #y scr,
+              w = #w hb, h = #h hb }
+          in
+            Sdl.set_render_draw_color r lime;
+            Sdl.render_draw_rect r box
+          end
+        else ())
     in
-      Sdl.render_copy_ex r (#tex s) src dst 0.0 p (if flip then Sdl.Flip_Horizontal else Sdl.Flip_None)
+      Sdl.render_copy_ex r (#tex s) src dst 0.0 p (if flip then Sdl.Flip_Horizontal else Sdl.Flip_None);
+      case debug of
+      SOME d => if (#active d)
+        then
+          debug_render d
+        else () |
+      NONE => ()
     end
 end
 

@@ -319,7 +319,7 @@ struct
         val keycode = C.fromCint (C.offset 5 C.Cint (C.deref e))
         val modifiers = C.fromCshort (C.offset 6 C.Cint (C.deref e))
         val t = parse_event typ keycode
-        val () = print ("event: " ^ (case t of
+        (* val () = print ("event: " ^ (case t of
           Quit => "quit" |
           App _ => "app" |
           Window => "window" | Sys_WM => "sys wm" |
@@ -334,7 +334,7 @@ struct
           Render_Targets_Reset => "render reset" |
           Key_Down _ => "keydown " ^ (Int.toString keycode) |
           Key_Up _ => "keyup " ^ (Int.toString keycode) |
-          User_Event => "user") ^ "\n")
+          User_Event => "user") ^ "\n") *)
       in
         { t = t,
           data = e }
