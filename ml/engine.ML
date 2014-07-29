@@ -257,6 +257,7 @@ struct
   fun load_anim src name key =
     let
       val obj = Json.object_get src key
+        handle Json.Key_Error k => raise Load_Err ("no " ^ k ^ " animation")
       val frames = Json.object_get obj "frames"
       val dur = Json.object_get obj "duration"
       fun load_lists i frs durs =
@@ -326,10 +327,11 @@ struct
       val siz = Json.object_get res "frame_size"
       fun i x = Json.integer_value (Json.array_get siz x)
       val start_dim = { x = 0, y = 0, w = i 0, h = i 1 }
-      val states = [Idle, Walk, Jump, Fall, Hang]
-      (* FIXME *)
-      val states = [Idle, Idle, Idle, Idle, Idle]
-      val anims = Vector.fromList (map (fn s => load_anim res n (string_of_state s)) states)
+      val idle_anim = load_anim res n (string_of_state Idle)
+      val states = [Walk, Jump, Fall, Hang]
+      val anims = Vector.fromList (idle_anim::(map (fn s =>
+        load_anim res n (string_of_state s)
+        handle Load_Err _ => (print ("warn: no " ^ (string_of_state s) ^ " anim for " ^ n ^ "\n"); idle_anim)) states))
     in
       Json.decref res;
       (t, {
@@ -391,8 +393,7 @@ struct
       val sd = case er of
         SOME r => (#start_dim r) |
         NONE => (#spawn es)
-      val w = #w sd
-      val h = #h sd
+      val {w, h, ...} = sd
       val rule = case er of
           SOME r => r |
           NONE => #rule es
@@ -491,19 +492,21 @@ struct
   fun pt_on_line p l =
     (#y p = #p l) andalso (between (#x p) (#a l) (#b l))
 
-  fun entity_feet r =
-    { x = (#x r + #w r) div 2,
-      y = #y r + #h r }
+  fun entity_feet {x, y, w, h} =
+    { x = x + w div 2,
+      y = y + h }
 
-  fun bsearch v (fail:'a) start limit pred : 'a =
+  fun bsearch v (fail:'a) start in_range pred : 'a =
     let
       exception Bsearch_Found of 'a
       fun iter i =
-        if i <= Vector.length v andalso
-            not (limit (Vector.sub (v, i))) then
-          case pred (Vector.sub (v, i)) of
-            SOME r => raise Bsearch_Found r |
-            NONE => iter (i + 1)
+        if i < Vector.length v then
+          if in_range (Vector.sub (v, i)) then
+            case pred (Vector.sub (v, i)) of
+              SOME r => raise Bsearch_Found r |
+              NONE => iter (i + 1)
+          else
+            fail
         else
           fail
     in
@@ -659,8 +662,7 @@ struct
             fall_time = #fall_time e })
     end
 
-  (* TODO sig *)
-  fun entity_walk (e:entity_state) terrain =
+  fun entity_walk e terrain =
     let
       val r = #rule e
       val v = { x = (int_of_dir (#dir e)) * (#walk_dist r), y = 0 }
@@ -670,7 +672,7 @@ struct
       (dist, e')
     end
 
-  fun entity_start_jump (e:entity_state) terrain t =
+  fun entity_start_jump e terrain t =
     let
       val e' = {
             jump_timeout = #jump_time (#rule e),
@@ -688,7 +690,7 @@ struct
     in
       entity_jump e' terrain (t = Jump_Wide) true
     end
-  and entity_jump (e:entity_state) terrain walk jump =
+  and entity_jump e terrain walk jump =
     let
       val jumping = (#jump_timeout e) > 0
       fun do_jump r =
@@ -728,7 +730,7 @@ struct
         (0, e)
     end
 
-  fun entity_fall (e:entity_state) terrain walk =
+  fun entity_fall e terrain walk =
     let
       val fall_time = #fall_time e + 1
       fun pre_fall y = entity_vector_move e { x = 0, y = y } terrain false
@@ -815,9 +817,11 @@ struct
         if #move_jump ev then
           let val (j, e') = entity_start_jump (turn e dir) lvl (if #walk ev andalso #has_gravity (#rule e) then Jump_Wide else Jump_High)
           in ((0,j,0), e') end
-        else
+        else if #walk ev then
           let val (w, e') = entity_walk (turn e dir) lvl
           in ((w,0,0), e') end
+        else
+          ((0,0,0), (turn e dir))
       fun move_by_state Idle = walk ()
         | move_by_state Walk = walk ()
         | move_by_state Hang = ((0,0,0), e)
@@ -880,8 +884,7 @@ struct
   fun draw_terrain_lines r lev screen =
     let
       val red = { r = 200, g = 20, b = 7, a = 255 }
-      val x = #x screen
-      val y = #y screen
+      val {x, y, ...} = screen
       fun draw_horizontal {p, a, b} =
           Sdl.render_draw_line r (a - x) (p - y) (b - x) (p - y)
       fun draw_vertical {p, a, b} =
@@ -911,8 +914,7 @@ struct
   fun draw_entity r scr s debug =
     let
       val rl = #rule s
-      val w = #w (#start_dim rl)
-      val h = #h (#start_dim rl)
+      val {w, h, ...} = #start_dim rl
       val src = {
         x = (#frame (#anim s)) * #w (#spawn s),
         y = 0, w = w, h = h }
@@ -920,7 +922,7 @@ struct
         x = #x (#pos s) - #x scr,
         y = #y (#pos s) - #y scr,
         w = w, h =h }
-      val flip = #dir s = Left
+      val flip = #dir s = Right
       val p = { x = 0, y = 0 }
       val pink = { r = 255, g = 105, b = 180, a = 255 }
       val lime = { r =  23, g = 225, b =  38, a = 255 }
@@ -931,11 +933,11 @@ struct
         else ();
         if (#hitboxes d) then
           let
-            val hb = entity_hitbox s
+            val {x, y, w, h} = entity_hitbox s
             val box = {
-              x = (#x hb) - #x scr,
-              y = (#y hb) - #y scr,
-              w = #w hb, h = #h hb }
+              x = x - #x scr,
+              y = y - #y scr,
+              w = w, h = h }
           in
             Sdl.set_render_draw_color r lime;
             Sdl.render_draw_rect r box
@@ -944,8 +946,8 @@ struct
     in
       Sdl.render_copy_ex r (#tex s) src dst 0.0 p (if flip then Sdl.Flip_Horizontal else Sdl.Flip_None);
       case debug of
-      SOME d => if (#active d)
-        then
+      SOME d =>
+        if (#active d) then
           debug_render d
         else () |
       NONE => ()

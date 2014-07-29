@@ -342,7 +342,7 @@ struct
         val h' = {
           x = (#x h) + ((E.int_of_dir dir) * #walk_dist rule),
           y = #y h, w = #w h, h = #h h }
-        val walk = ((E.collides_with_terrain h' terrain) <> E.Hit_None) andalso
+        val walk = ((E.collides_with_terrain h' terrain) = E.Hit_None) andalso
             ((not (#has_gravity rule)) orelse E.stands_on_terrain h' terrain)
         val order = {
           move_left = walk andalso (not right),
@@ -426,13 +426,13 @@ struct
                 #when m <> Msg_Never andalso in_rect (#pos m) r) (#msgs mrules)) of
               SOME m => (SOME m, #timeout mrules) (* TODO update Msg_Once status *) |
               NONE => (old_msg, old_msg_timeout)
-            (* TODO collision detection *)
+            (* TODO player-object/-enemy collision w/ collect & death *)
             val run = if #exit ev then Mode_Exit else Mode_Game
           in
             { need_to_collect = #need_to_collect gs,
               intro = #intro gs,
               logo = #logo gs,
-              entities = {players = Vector.fromList [player], objects = objects, enemies = enemies},
+              entities = {players = Vector.fromList [next_player], objects = objects, enemies = moved_enemies},
               msg = msg,
               msg_timeout = msg_timeout,
               run = run,
@@ -473,8 +473,13 @@ struct
         | render_mode Mode_Game =
           let
             val msg = #msg s
+            val d = #debug gs
           in
             E.draw_background r (#background (#level s)) screen;
+            if true then (*(#active d) andalso #show_terrain_collision d then*)
+              E.draw_terrain_lines r (#level s) screen
+            else
+              ();
             draw_group (#objects (#entities gs));
             draw_group (#enemies (#entities gs));
             E.draw_entity r screen player (SOME (#debug gs));
