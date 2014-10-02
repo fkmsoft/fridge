@@ -85,7 +85,7 @@ sig
   val load_entities : string -> string -> Sdl.renderer -> (Json.t * (Sdl.texture * entity_rule) vector)
   val load_entity_resource : Json.t -> string -> Sdl.renderer -> string -> Sdl.texture * entity_rule
   val load_state : entity_state -> state -> entity_state
-  val init_entity_state : entity_state -> entity_rule option -> Sdl.texture option -> state -> entity_state
+  val init_entity_state : entity_state -> state -> entity_state
   val clear_debug : Sdl.font option -> Sdl.texture -> debug_state
 
   (*** teardown ***)
@@ -388,34 +388,20 @@ struct
       hitbox = #box ar }
     end
 
-  fun init_entity_state es er t st =
-    let
-      val sd = case er of
-        SOME r => (#start_dim r) |
-        NONE => (#spawn es)
-      val {w, h, ...} = sd
-      val rule = case er of
-          SOME r => r |
-          NONE => #rule es
-      val tex = case t of
-          SOME te => te |
-          NONE => #tex es
-    in
-      load_state {
-        rule = rule,
-        tex = tex,
-        active = true,
-        anim = #anim es,
-        dir = Left,
-        st = st,
-        hitbox = #hitbox es,
-        pos = { x = #x (#spawn es), y = #y (#spawn es) },
-        spawn = { x = #x (#spawn es), y = #y (#spawn es),
-          w = w, h = h },
-        jump_timeout = 0,
-        jump_type = Jump_High,
-        fall_time = 0 } st
-    end
+  fun init_entity_state es st =
+    load_state {
+      rule = #rule es,
+      tex = #tex es,
+      active = true,
+      anim = #anim es,
+      dir = Left,
+      st = st,
+      hitbox = #hitbox es,
+      pos = { x = #x (#spawn es), y = #y (#spawn es) },
+      spawn = #spawn es,
+      jump_timeout = 0,
+      jump_type = Jump_High,
+      fall_time = 0 } st
 
   fun clear_debug font terrain_collision =
     { active = false, pause = false, frames = true,
@@ -555,7 +541,7 @@ struct
 
   fun collides_with_terrain { x, y, w, h } lev =
     let
-      val hb = { x = x - 1, y = y, w = w, h = h }
+      val hb = { x = x, y = y, w = w, h = h - 1 }
       val hor = #horizontal lev
       val ver = #vertical lev
       val hit_hor = bsearch hor Hit_None (first_idx hor y)
@@ -584,15 +570,14 @@ struct
 
   fun entity_hitbox s =
     let
+      val hb = #hitbox s
       val x = #x (#pos s)
-      val y = #y (#pos s) + #y (#hitbox s)
-      val w = #w (#hitbox s)
-      val h = #h (#hitbox s)
+      val y = #y (#pos s) + #y hb
       val xoff = case #dir s of
-        Left => #x (#hitbox s) |
-        Right => #w (#spawn s) - (#x (#hitbox s)) - (#w (#hitbox s))
+        Left => #x hb |
+        Right => #w (#spawn s) - (#x hb) - (#w hb)
     in
-      { x = x + xoff, y = y, w = w, h = h }
+      { x = x + xoff, y = y, w = #w hb, h = #h hb }
     end
 
   fun cmp_lines () = ()
@@ -813,7 +798,7 @@ struct
       val dir = if #move_left ev then Left
         else if #move_right ev then Right
         else #dir e
-      fun walk () =
+      fun on_ground () =
         if #move_jump ev then
           let val (j, e') = entity_start_jump (turn e dir) lvl (if #walk ev andalso #has_gravity (#rule e) then Jump_Wide else Jump_High)
           in ((0,j,0), e') end
@@ -822,8 +807,8 @@ struct
           in ((w,0,0), e') end
         else
           ((0,0,0), (turn e dir))
-      fun move_by_state Idle = walk ()
-        | move_by_state Walk = walk ()
+      fun move_by_state Idle = on_ground ()
+        | move_by_state Walk = on_ground ()
         | move_by_state Hang = ((0,0,0), e)
         | move_by_state Jump =
           let val (j, e') = entity_jump (turn e dir) lvl (#walk ev) (#move_jump ev)

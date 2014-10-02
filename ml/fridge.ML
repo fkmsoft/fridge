@@ -415,7 +415,7 @@ struct
                 enemies
             val (mlog, moved_player_) = E.move_entity player (#player ev) level
             val moved_player = E.load_state moved_player_ (#st moved_player_)
-            val next_player = if #reset ev then E.init_entity_state moved_player NONE NONE E.Idle else moved_player
+            val next_player = if #reset ev then E.init_entity_state moved_player E.Idle else moved_player
             val (old_msg, old_msg_timeout) = if #msg_timeout gs > 0 then
                 (#msg gs, (#msg_timeout gs) - 1)
               else
@@ -483,6 +483,12 @@ struct
             draw_group (#objects (#entities gs));
             draw_group (#enemies (#entities gs));
             E.draw_entity r screen player (SOME (#debug gs));
+            if #active d then
+              case #font d of
+                SOME f => render_entity_info r f player |
+                NONE => print "no font\n"
+            else
+              ();
             case #msg gs of
               SOME m => draw_message r (#tex msg) m (#box msg) (#line msg) |
               NONE => ()
@@ -608,15 +614,15 @@ struct
           fun f spawn j =
             let
               val (tex, rule) = Vector.sub (e_ress, ei)
-              val spawn_st = {
+              val spawn_es = {
                 active = false,
                 pos = { x = 0, y = 0 },
                 hitbox = { x = 0, y = 0, w = 0, h = 0 },
                 spawn = {
                   x = ival (Json.array_get spawn 0),
                   y = ival (Json.array_get spawn 1),
-                  w = 0,
-                  h = 0 },
+                  w = #w (#start_dim rule),
+                  h = #h (#start_dim rule) },
                 dir = E.Left,
                 st = st,
                 jump_timeout = 0,
@@ -625,7 +631,7 @@ struct
                 anim = { pos = 0, frame = 0, remaining = 0 },
                 rule = rule,
                 tex = tex }
-              val es = E.init_entity_state spawn_st NONE NONE st
+              val es = E.init_entity_state spawn_es st
               (* TODO custom rules *)
             in
               es
@@ -662,7 +668,7 @@ struct
             rule = rule,
             tex = tex }
     in
-      E.init_entity_state intro NONE NONE E.Idle
+      E.init_entity_state intro E.Idle
     end
 
   fun load_config game root (screen, w, r) =

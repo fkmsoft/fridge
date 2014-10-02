@@ -8,7 +8,7 @@
               "loss": ["I need to collect", "more stuff..."]},
   "font": { "resource": "04b.ttf", "size": 28 },
   "entities": { "resource": "entities.json" },
-  "players": { "woman":     [[600, 980, {"walk-dist": 5, "jump-dist-y": 7}]] },
+  "players": { "man":     [[600, 980, {"walk-dist": 5, "jump-dist-y": 7}]] },
   "objects": { "disc":    [[ 450, 450]],
                "burger":  [[1080, 420]],
                "pizza":   [[1385, 980]],
