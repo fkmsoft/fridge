@@ -705,7 +705,6 @@ static void render(session const *s, game_state const *gs)
 	case MODE_GAME:
 		draw_background(s->r, s->level.background, &screen);
 		if (gs->debug.active && gs->debug.show_terrain_collision) {
-			draw_background(s->r, gs->debug.terrain_collision, &screen);
 			draw_terrain_lines(s->r, &s->level, &screen);
 		}
 		int g;
